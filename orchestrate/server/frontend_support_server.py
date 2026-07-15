@@ -42,6 +42,7 @@ from common.config import (
     FLOW_CTL_PARALLEL_AGENT_CARDS, FLOW_CTL_PARALLEL_DELETE_PSOP,
     FLOW_CTL_PARALLEL_SAVE_PSOP, FLOW_CTL_PARALLEL_ONE_PSOP,
     FLOW_CTL_PARALLEL_ALL_PSOPS, FLOW_CTL_PARALLEL_PLAN, FLOW_CTL_PARALLEL_PARSE_PDF,
+    FLOW_CTL_PARALLEL_PARSE_BPMN,
     FLOW_CTL_START_PROCESS_STREAM, FLOW_CTL_PARALLEL_START_PROCESS_STREAM,
 )
 from common.custom.default_handle import HandlerRegistry
@@ -59,6 +60,7 @@ from orchestrate.core.workflow_search_result import WorkflowSearchResult
 from orchestrate.server.middleware import ConnectionLimitMiddleware, TimeoutMiddleware, RateLimiter
 from orchestrate.server.shared_handlers import SharedHandlers
 from orchestrate.solution_package.parse_flow import SolutionPackageParser
+from orchestrate.bpmn_flows.parse_bpmn import BPMNFlowParser, BPMNParsingError, BPMNProcessNotFoundError
 
 app = FastAPI(title="Workflow Orchestration API", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -362,6 +364,82 @@ async def parse_pdf(
             os.unlink(tmp_file_path)
         if acquired:
             parse_pdf_semaphore.release()
+
+
+parse_bpmn_semaphore = anyio.Semaphore(int(config.get(FLOW_CTL_PARALLEL_PARSE_BPMN, 5)))
+
+
+@router.post("/parse-bpmn")
+async def parse_bpmn(
+    file: UploadFile = File(...),
+    process_id: str = Query(None, description="Optional specific BPMN process ID to parse; parses all processes if omitted"),
+    _: Any = Depends(RateLimiter(config, "parse_bpmn"))
+):
+    acquired = False
+    tmp_file_path = None
+    try:
+        parse_bpmn_semaphore.acquire_nowait()
+        acquired = True
+
+        filename = file.filename or "unknown"
+        logger.info(f"Parsing BPMN: {filename}, size={file.size}, process_id={process_id or 'ALL'}")
+
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Filename is required")
+        if not re.fullmatch(r"^[\w\-. ]{1,128}\.(bpmn|xml)$", file.filename):
+            raise HTTPException(status_code=400, detail="Invalid filename format")
+
+        suffix = pathlib.Path(file.filename).suffix.lower()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_file_path = tmp.name
+            content = await file.read()
+
+        if len(content) > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(status_code=413,
+                detail=f"File size exceeds maximum allowed {MAX_FILE_SIZE_BYTES // (1024*1024)} MB")
+        stripped = content.lstrip()
+        if len(stripped) < 1 or stripped[:1] != b'<':
+            raise HTTPException(status_code=400, detail="File is not valid BPMN/XML")
+
+        with open(tmp_file_path, 'wb') as f:
+            f.write(content)
+
+        parser = BPMNFlowParser()
+        try:
+            if process_id:
+                bpmn_md = parser.parse_bpmn_process(tmp_file_path, process_id)
+            else:
+                bpmn_md = parser.parse_bpmn_all_processes(tmp_file_path)
+        except BPMNProcessNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except BPMNParsingError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        if not bpmn_md:
+            raise HTTPException(status_code=400, detail="No BPMN process content could be parsed")
+
+        logger.info(f"BPMN parsed (markdown, {len(bpmn_md)} chars):\n{bpmn_md}")
+
+        preflow = PreFlow(
+            name=file.filename,
+            description=f"Workflow parsed from BPMN {file.filename}",
+            steps_md=bpmn_md
+        )
+        logger.info(f"BPMN parsed: preflow_id={preflow.id}")
+        return ok(data=json.loads(preflow.model_dump_json()))
+    except anyio.WouldBlock:
+        raise HTTPException(status_code=503, detail="Server is busy")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"BPMN parsing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if tmp_file_path and os.path.exists(tmp_file_path):
+            os.unlink(tmp_file_path)
+        if acquired:
+            parse_bpmn_semaphore.release()
+
 
 plan_semaphore = anyio.Semaphore(int(config.get(FLOW_CTL_PARALLEL_PLAN, 10)))
 

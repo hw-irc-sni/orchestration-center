@@ -25,7 +25,7 @@ from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from common.config import (
-    FLOW_CTL_PARSE_PDF, FLOW_CTL_PLAN, FLOW_CTL_ALL_PSOPS, FLOW_CTL_ONE_PSOP,
+    FLOW_CTL_PARSE_PDF, FLOW_CTL_PARSE_BPMN, FLOW_CTL_PLAN, FLOW_CTL_ALL_PSOPS, FLOW_CTL_ONE_PSOP,
     FLOW_CTL_SAVE_PSOP, FLOW_CTL_DELETE_PSOP, FLOW_CTL_AGENT_CARDS,
     FLOW_CTL_GENERATE_PSOP, FLOW_CTL_RETRIEVE_PSOP, FLOW_CTL_START_PROCESS_STREAM,
 )
@@ -101,6 +101,7 @@ limiter = strategies.MovingWindowRateLimiter(sync_storage)
 def parse_rate_limit(interface_name: str, config):
     config_map = {
         "parse_pdf":(FLOW_CTL_PARSE_PDF, 50),
+        "parse_bpmn":(FLOW_CTL_PARSE_BPMN, 50),
         "plan":(FLOW_CTL_PLAN, 50),
         "get_all_psops":(FLOW_CTL_ALL_PSOPS, 50),
         "get_psop_by_id":(FLOW_CTL_ONE_PSOP, 50),
