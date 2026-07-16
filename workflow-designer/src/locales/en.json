@@ -101,7 +101,7 @@
   "orchestration": {
     "title": "Orchestration",
     "list_label": "CORE O&M FLOWS",
-    "method_import": "SolutionPackage Import",
+    "method_import": "Import Flows",
     "method_graph": "Graph Builder",
     "method_ai": "Natural Language Orchestration",
     "edit_mode": "Edit Mode",
@@ -150,10 +150,10 @@
     "browse_workflow_hint": "Browse and manage all saved workflows",
     "no_workflows": "No workflows yet",
     "select_workflow_hint": "Select a workflow to view",
-    "packages_title": "Solution Packages",
-    "packages_upload_title": "Import New SolutionPackage",
-    "packages_upload_hint": "Drag & drop a PDF file here, or click to select",
-    "packages_list_title": "Imported Solution Packages"
+    "packages_title": "Import Flows",
+    "packages_upload_title": "Import New SolutionPackage or BPMN Flow",
+    "packages_upload_hint": "Drag & drop a PDF or BPMN file here, or click to select",
+    "packages_list_title": "Imported Flows"
   },
   "workflow": {
     "title": "WORKFLOW PROGRESSION",

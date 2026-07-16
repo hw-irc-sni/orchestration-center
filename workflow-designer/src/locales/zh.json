@@ -152,7 +152,7 @@
     "select_workflow_hint": "请选择一个工作流查看",
     "packages_title": "解决方案包管理",
     "packages_upload_title": "导入新的解决方案包",
-    "packages_upload_hint": "拖拽 PDF 文件到此处，或点击选择文件",
+    "packages_upload_hint": "拖拽 PDF 或 BPMN 文件到此处，或点击选择文件",
     "packages_list_title": "已导入的解决方案包"
   },
   "workflow": {

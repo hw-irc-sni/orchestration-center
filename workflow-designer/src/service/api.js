@@ -101,6 +101,16 @@ export async function parsePdf(file) {
     return body.data;
 }
 
+// ──── BPMN Parsing ────
+
+export async function parseBpmn(file, processId) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const query = processId ? `?process_id=${encodeURIComponent(processId)}` : '';
+    const body = await api.post(`${ORCHESTRATE_BASE()}/parse-bpmn${query}`, formData);
+    return body.data;
+}
+
 // ──── Workflow Generation ────
 
 export async function handlePlan(preflow, agentCards) {
