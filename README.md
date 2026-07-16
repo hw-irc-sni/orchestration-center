@@ -270,15 +270,109 @@ flowchart TB
 
 Full API specification: [API Reference](docs/en/Orchestration%20Center%20API%20Reference.md)
 
+## Security
+
+The Orchestration Center provides multi-layer access control:
+
+### Frontend Login (Internal API)
+
+The internal API (`/rest/v1/orchestrate/*`) is protected by token-based authentication. Two modes are supported depending on `persistence_mode`:
+
+**Database mode (`persistence_mode=postgresql`)**:
+- Users are stored in the PostgreSQL `users` table with SHA-256 + per-user salt hashing.
+- A default `admin` user (password: `OpenAN@2026`) is auto-created on first startup.
+- New users can self-register via the registration link on the login page.
+- Passwords must be at least 8 characters with uppercase, lowercase, and a number.
+
+**File mode (`persistence_mode=file`)**:
+- A single password is configured via `access_password` in `server.conf`.
+- Username is fixed as `admin`.
+- Registration is not available.
+
+| Config Key | Description | Default |
+|------------|-------------|---------|
+| `access_password` | SHA-256 hash of the login password (file mode only). Leave empty to disable auth. | empty (disabled) |
+| `access_token_ttl` | Session token lifetime in seconds. | `43200` (12h) |
+| `persistence_mode` | `postgresql` enables database-backed user management; `file` uses config-based auth. | `file` |
+
+The frontend hashes the password with SHA-256 (`crypto.subtle`) before sending. Tokens are in-memory with TTL, passed via `Authorization: Bearer` header or `access_token` query parameter (for SSE/EventSource).
+
+Generate the password hash (file mode):
+```bash
+python generate_access_password.py
+```
+
+### TLS/HTTPS
+
+| Config Key | Description |
+|------------|-------------|
+| `enable_https` | Enable HTTPS for the backend server. |
+| `verify_client` | Require client certificate (mTLS). |
+| `ssl_certfile` | Server certificate path. |
+| `ssl_keyfile` | Server private key path (encrypted). |
+| `ssl_ca_certs` | CA trust store for verifying client certificates. |
+| `client_verify_server` | Verify remote server certs on outbound HTTPS calls (e.g., to registry center). Default `false` for backward compat. |
+
+Generate self-signed certificates (RSA 3072, compliant with cert validator):
+```bash
+python generate_selfsign_cert.py etc/ssl serverAuth
+```
+
+**Enabling HTTPS (step by step):**
+
+1. Generate certificates (see above). The script creates `server_RSA.cer` and `server_key_RSA.pem`. Copy to the names expected by `server.conf`:
+   ```bash
+   cd etc/ssl
+   cp server_RSA.cer server.cer
+   cp server_key_RSA.pem server_key.pem
+   cp server.cer trust.cer
+   echo -n "<your-password>" > cert_pwd
+   ```
+
+2. Update `etc/conf/server.conf`:
+   ```ini
+   enable_https=true
+   verify_client=false          # set to true for mTLS (requires client certs)
+   agent_registry_url=https://127.0.0.1:5000   # if registry center also uses HTTPS
+   ```
+
+3. Set `client_verify_server=false` in `etc/conf/server.properties` to skip remote cert verification when connecting to other services with self-signed certs (e.g., registry center).
+
+4. Restart the backend: `python -m orchestrate.start` (or `systemctl restart orchestration-center`)
+
+5. If using Nginx as reverse proxy, update `proxy_pass` to `https://127.0.0.1:5001/` and add `proxy_ssl_verify off;`. Nginx needs an unencrypted private key:
+   ```bash
+   openssl rsa -in etc/ssl/server_key.pem -out etc/ssl/nginx_key.pem -passin pass:<your-password>
+   ```
+   Then in nginx.conf: `ssl_certificate_key /path/to/etc/ssl/nginx_key.pem;`
+
+### External API Protection
+
+The external API (`/api/v1/*`) is protected by mTLS at the TLS layer when `enable_https=true` and `verify_client=true`. Clients must present a valid certificate during the TLS handshake -- no application-layer check needed.
+
+### Auth Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/rest/v1/orchestrate/auth/login` | Login with username + password hash, returns session token |
+| `POST` | `/rest/v1/orchestrate/auth/register` | Register a new user (PostgreSQL mode only) |
+| `POST` | `/rest/v1/orchestrate/auth/logout` | Revoke session token |
+| `GET` | `/rest/v1/orchestrate/auth/check` | Check if auth is required, token validity, and registration availability |
+| `GET` | `/rest/v1/orchestrate/auth/users` | List all users (PostgreSQL mode only) |
+| `DELETE` | `/rest/v1/orchestrate/auth/users/{username}` | Delete a user (admin cannot be deleted) |
+
+## Configuration
 ## Configuration
 
 | Config File | Purpose |
 |-------------|---------|
-| `etc/conf/server.conf` | Server IP, port, TLS certificates, persistence mode, registry URL |
-| `etc/conf/server.properties` | TLS versions, ciphers, rate limiting, connection limits |
+| `etc/conf/server.conf` | Server IP, port, TLS certificates, persistence mode, registry URL, access password |
+| `etc/conf/server.properties` | TLS versions, ciphers, rate limiting, connection limits, client_verify_server |
 | `etc/conf/db_config.json` | PostgreSQL connection settings |
 | `common/config/llm_config.json` | LLM/embed/rerank model endpoints |
 | `common/config/README_en.md` | LLM configuration guide |
+| `generate_selfsign_cert.py` | Self-signed certificate generator (RSA 3072) |
+| `common/ssl/client_ssl_context.py` | Client-side SSL context factory for outbound HTTPS |
 
 ## A2A-T SDK Integration
 

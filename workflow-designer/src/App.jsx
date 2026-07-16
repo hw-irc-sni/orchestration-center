@@ -17,6 +17,8 @@
 import {useTranslation} from "react-i18next";
 import {useEffect, useState} from "react";
 import Header from "@/components/common/header/index.jsx";
+import Login from "@/components/common/login/index.jsx";
+import {authCheck, setAuthToken} from "@/service/api.js";
 import AgentRegistry from "./components/registry_center/index.jsx";
 import OrchestrationCenter from "@/components/orchestration_center/index.jsx";
 import ExecutionCenter from "@/components/execution_center/index.jsx";
@@ -26,14 +28,48 @@ import {ErrorBoundary} from "@/components/common/error_boundary/index.jsx";
 const MainContainer = () => {
     const {t, i18n} = useTranslation();
 
-    const [isDark, setIsDark] = useState(() => {
+   const [authState, setAuthState] = useState('checking');
+   const [authRequired, setAuthRequired] = useState(false);
+   const [registrationEnabled, setRegistrationEnabled] = useState(false);
+   const [currentUser, setCurrentUser] = useState(null);
+
+   const [isDark, setIsDark] = useState(() => {
         const savedTheme = localStorage.getItem('theme');
         return (savedTheme || 'dark') === 'dark';
     });
 
-    const [activeTab, setActiveTab] = useState(() => {
-        return localStorage.getItem('activeTab') || 'orchestration'
-    });
+    useEffect(() => {
+        authCheck()
+            .then((data) => {
+               if (data.auth_required === false || data.authenticated === true) {
+                   setAuthRequired(data.auth_required !== false);
+                   setRegistrationEnabled(data.registration_enabled || false);
+                   setCurrentUser(data.username || null);
+                   setAuthState('authenticated');
+               } else {
+                   setAuthRequired(true);
+                   setRegistrationEnabled(data.registration_enabled || false);
+                   setAuthState('unauthenticated');
+               }
+            })
+            .catch(() => setAuthState('unauthenticated'));
+    }, []);
+
+    useEffect(() => {
+        const handleAuthExpired = () => setAuthState('unauthenticated');
+        window.addEventListener('auth-expired', handleAuthExpired);
+        return () => window.removeEventListener('auth-expired', handleAuthExpired);
+    }, []);
+
+   const handleLogout = () => {
+       setAuthToken(null);
+       setAuthState('unauthenticated');
+       setCurrentUser(null);
+   };
+
+   const [activeTab, setActiveTab] = useState(() => {
+       return localStorage.getItem('activeTab') || 'agents'
+   });
 
     const handleLangChange = (l) => {
         i18n.changeLanguage(l);
@@ -65,16 +101,31 @@ const MainContainer = () => {
     }, []);
 
     return (
+        <>
+        {authState === 'checking' ? (
+            <div className="h-screen flex items-center justify-center bg-zinc-50 dark:bg-[#09090B]">
+                <div className="text-zinc-400 text-sm animate-pulse">Loading...</div>
+            </div>
+        ) : authState !== 'authenticated' ? (
+           <Login
+               isDark={isDark}
+               onLoginSuccess={() => setAuthState('authenticated')}
+               onLoginWithUser={(user) => { setCurrentUser(user); setAuthState('authenticated'); }}
+               registrationEnabled={registrationEnabled}
+           />
+        ) : (
         <div className="h-screen flex flex-col bg-zinc-50 dark:bg-[#09090B] overflow-hidden font-sans text-lg transition-colors duration-500">
-            <Header
-                currentTab={activeTab}
-                onTabChange={setActiveTab}
-                isDark={isDark}
-                setIsDark={setIsDark}
-                lang={i18n.language}
-                onLangChange={handleLangChange}
-                t={t}
-            />
+           <Header
+               currentTab={activeTab}
+               onTabChange={setActiveTab}
+               isDark={isDark}
+               setIsDark={setIsDark}
+               lang={i18n.language}
+               onLangChange={handleLangChange}
+               t={t}
+               onLogout={authRequired ? handleLogout : null}
+               currentUser={currentUser}
+           />
 
             <main className="flex-1 min-h-0 relative overflow-hidden">
                 <div className={`h-full w-full ${activeTab === 'agents' ? 'relative z-10 visible animate-in' : 'absolute invisible -left-[9999px] -top-[9999px]'}`}>
@@ -94,6 +145,8 @@ const MainContainer = () => {
                 </div>
             </main>
         </div>
+        )}
+        </>
     )
 }
 

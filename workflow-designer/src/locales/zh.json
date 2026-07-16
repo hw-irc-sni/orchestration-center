@@ -8,6 +8,26 @@
       "skills": "技能中心"
     }
   },
+  "login": {
+    "title": "访问密码",
+    "username_placeholder": "用户名",
+    "placeholder": "请输入访问密码...",
+    "button": "进入",
+    "loading": "验证中...",
+    "error": "登录失败，请检查密码是否正确",
+    "logout": "退出登录",
+    "register_title": "注册",
+    "register_button": "注册",
+    "confirm_password": "确认密码...",
+    "no_account": "还没有账号？",
+    "have_account": "已有账号？",
+    "password_mismatch": "两次密码不一致",
+    "password_too_short": "密码至少8位",
+    "password_complexity": "密码必须包含大写字母、小写字母和数字",
+    "change_password": "修改密码",
+    "current_password": "当前密码",
+    "new_password": "新密码"
+  },
   "execution": {
     "title": "工作流执行",
     "execute": "开始执行",

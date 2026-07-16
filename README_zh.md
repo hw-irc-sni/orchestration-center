@@ -267,12 +267,104 @@ flowchart TB
 
 完整规范：[API 参考](docs/zh/编排中心API参考.md)
 
+## 安全
+
+编排中心提供多层访问控制：
+
+### 前端登录（内部 API）
+
+内部 API（`/rest/v1/orchestrate/*`）受令牌认证保护。根据 `persistence_mode` 支持两种模式：
+
+**数据库模式（`persistence_mode=postgresql`）**：
+- 用户存储在 PostgreSQL `users` 表中，密码使用 SHA-256 + 每用户独立 salt 哈希。
+- 首次启动自动创建默认 `admin` 用户（密码：`OpenAN@2026`）。
+- 新用户可通过登录页的注册链接自行注册。
+- 密码要求至少 8 位，包含大写字母、小写字母和数字。
+
+**文件模式（`persistence_mode=file`）**：
+- 通过 `server.conf` 的 `access_password` 配置单一密码。
+- 用户名固定为 `admin`。
+- 不支持注册。
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `access_password` | 登录密码的 SHA-256 哈希值（仅 file 模式）。留空则禁用认证。 | 空（禁用） |
+| `access_token_ttl` | 会话令牌有效期（秒）。 | `43200`（12小时） |
+| `persistence_mode` | `postgresql` 启用数据库用户管理；`file` 使用配置密码认证。 | `file` |
+
+前端使用 `crypto.subtle` 对密码做 SHA-256 哈希后发送。令牌存储在内存中，通过 `Authorization: Bearer` 请求头或 `access_token` 查询参数（用于 SSE/EventSource）传递。
+
+生成密码哈希（file 模式）：
+```bash
+python generate_access_password.py
+```
+
+### TLS/HTTPS
+
+| 配置项 | 说明 |
+|--------|------|
+| `enable_https` | 启用 HTTPS。 |
+| `verify_client` | 要求客户端证书（mTLS 双向认证）。 |
+| `ssl_certfile` | 服务器证书路径。 |
+| `ssl_keyfile` | 服务器私钥路径（加密存储）。 |
+| `ssl_ca_certs` | CA 信任库，用于校验客户端证书。 |
+| `client_verify_server` | 出站 HTTPS 调用（如访问注册中心）时是否校验对端证书。默认 `false`（向后兼容）。 |
+
+生成自签名证书（RSA 3072，满足证书校验要求）：
+```bash
+python generate_selfsign_cert.py etc/ssl serverAuth
+```
+
+**启用 HTTPS 步骤：**
+
+1. 生成证书（见上方命令），脚本会创建 `server_RSA.cer` 和 `server_key_RSA.pem`。复制为 `server.conf` 期望的文件名：
+   ```bash
+   cd etc/ssl
+   cp server_RSA.cer server.cer
+   cp server_key_RSA.pem server_key.pem
+   cp server.cer trust.cer
+   echo -n "<你的密码>" > cert_pwd
+   ```
+
+2. 修改 `etc/conf/server.conf`：
+   ```ini
+   enable_https=true
+   verify_client=false          # 设为 true 启用 mTLS（需客户端证书）
+   agent_registry_url=https://127.0.0.1:5000   # 如果注册中心也用了 HTTPS
+   ```
+
+3. 在 `etc/conf/server.properties` 中设置 `client_verify_server=false`，跳过对其他服务（如注册中心）的证书校验（自签名证书场景）。
+
+4. 重启后端：`python -m orchestrate.start`（或 `systemctl restart orchestration-center`）
+
+5. 如果使用 Nginx 反向代理，将 `proxy_pass` 改为 `https://127.0.0.1:5001/` 并添加 `proxy_ssl_verify off;`。Nginx 需要未加密的私钥：
+   ```bash
+   openssl rsa -in etc/ssl/server_key.pem -out etc/ssl/nginx_key.pem -passin pass:<你的密码>
+   ```
+   然后在 nginx.conf 中：`ssl_certificate_key /path/to/etc/ssl/nginx_key.pem;`
+
+### 外部 API 保护
+
+外部 API（`/api/v1/*`）在 `enable_https=true` 且 `verify_client=true` 时受 mTLS 保护。客户端必须在 TLS 握手阶段出示有效证书，无需应用层额外检查。
+
+### 认证接口
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| `POST` | `/rest/v1/orchestrate/auth/login` | 用户名 + 密码哈希登录，返回会话令牌 |
+| `POST` | `/rest/v1/orchestrate/auth/register` | 注册新用户（仅 PostgreSQL 模式） |
+| `POST` | `/rest/v1/orchestrate/auth/logout` | 撤销会话令牌 |
+| `GET` | `/rest/v1/orchestrate/auth/check` | 检查认证状态、令牌有效性及注册可用性 |
+| `GET` | `/rest/v1/orchestrate/auth/users` | 列出所有用户（仅 PostgreSQL 模式） |
+| `DELETE` | `/rest/v1/orchestrate/auth/users/{username}` | 删除用户（admin 不可删除） |
+
+
 ## 配置速查
 
 | 配置文件 | 用途 |
 |----------|------|
-| `etc/conf/server.conf` | 服务 IP、端口、TLS 证书、持久化模式、注册中心 URL |
-| `etc/conf/server.properties` | TLS 版本、密码套件、流控参数、连接限制 |
+| `etc/conf/server.conf` | 服务 IP、端口、TLS 证书、持久化模式、注册中心 URL, access password |
+| `etc/conf/server.properties` | TLS 版本、密码套件、流控参数、连接限制, client_verify_server |
 | `etc/conf/db_config.json` | PostgreSQL 连接配置 |
 | `common/config/llm_config.json` | LLM/Embedding/Rerank 模型端点 |
 | `common/config/README_zh.md` | LLM 配置指南 |

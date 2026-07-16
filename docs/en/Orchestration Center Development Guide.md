@@ -572,3 +572,83 @@ except ValueError:
 - 1. First call the API once using `curl` or Postman to obtain the actual response JSON
 - 2. Adjust the `response` path based on the actual JSON structure, e.g., `"data.0.embedding"` or `"data[0].embedding"` are both acceptable
 - 3. Confirm that array indices and field names in the path are case-sensitive
+
+
+## 6. Security and TLS Configuration
+
+### 6.1 Frontend Login Authentication
+
+The internal API (`/rest/v1/orchestrate/*`) supports token-based authentication with two modes:
+
+**Database mode (`persistence_mode=postgresql`)**:
+- **User store**: `database/utils/user_store.py` -- CRUD operations on PostgreSQL `users` table with SHA-256 + per-user salt password hashing
+- **Auto-seed**: `start.py` calls `seed_admin_if_empty()` on startup to create default admin (password: `OpenAN@2026`)
+- **Registration**: `POST /auth/register` endpoint available, username format validated, password complexity checked on frontend
+- **User management**: `GET /auth/users` (list), `DELETE /auth/users/{username}` (delete, admin protected)
+- **Auth module**: `orchestrate/server/auth.py` -- `SessionStore` maps token to (username, expiry), `auth_middleware`
+- **Auth endpoints**: `POST /auth/login`, `POST /auth/register`, `POST /auth/logout`, `GET /auth/check`, `GET /auth/users`, `DELETE /auth/users/{username}`
+- **is_auth_enabled()**: Checks `persistence_mode` -- PostgreSQL mode queries `has_any_user()`, file mode checks `access_password` config
+
+**File mode (`persistence_mode=file`)**:
+- **Configuration**: Set `access_password` (SHA-256 hash) and `access_token_ttl` in `etc/conf/server.conf`
+- Single `admin` user with password from config, no registration or user management
+- Falls back to this mode when database is not available
+
+**Common to both modes**:
+- **Token delivery**: `Authorization: Bearer <token>` header, or `access_token` query parameter (for SSE/EventSource)
+- **Password hashing**: Frontend hashes with `crypto.subtle.digest('SHA-256')` before sending; backend stores/compares hashes
+- **Disable**: When `access_password` is empty and no users exist, authentication is disabled (backward compatible)
+
+### 6.2 TLS/HTTPS Configuration
+
+Server-side HTTPS is configured via `etc/conf/server.conf`:
+
+| Key | Description |
+|-----|-------------|
+| `enable_https` | Enable HTTPS for the backend |
+| `verify_client` | Require client certificate (mTLS) |
+| `ssl_certfile` | Server certificate |
+| `ssl_keyfile` | Server private key (encrypted) |
+| `ssl_keyfile_password` | Password file for private key |
+| `ssl_ca_certs` | CA trust store |
+
+Certificate validation requirements (in `common/cert/cert_validater.py`):
+- RSA: key size >= 3072 bits
+- ECDSA: key size >= 256 bits
+
+Generate compliant self-signed certificates:
+```bash
+python generate_selfsign_cert.py etc/ssl serverAuth
+```
+
+**Enabling HTTPS (step by step):**
+
+1. Generate certificates (see above). Copy to the filenames expected by `server.conf`:
+   ```bash
+   cd etc/ssl
+   cp server_RSA.cer server.cer
+   cp server_key_RSA.pem server_key.pem
+   cp server.cer trust.cer
+   echo -n "<password>" > cert_pwd
+   ```
+
+2. Set `enable_https=true` in `etc/conf/server.conf`. Set `verify_client=true` for mTLS.
+
+3. Set `client_verify_server=false` in `etc/conf/server.properties` to skip remote cert verification (self-signed certs).
+
+4. Restart the backend service.
+
+### 6.3 Client-Side SSL Context
+
+Outbound HTTPS calls (e.g., orchestration center -> registry center) use a shared SSL context factory:
+
+- **Module**: `common/ssl/client_ssl_context.py` -- `create_client_ssl_context()`
+- **Config**: `client_verify_server` in `server.properties` (default: `false` for backward compat)
+- **Features**: CA trust store verification, optional mTLS client cert, CRL checking, cipher suite enforcement
+- **Usage**: Passed to `httpx.AsyncClient(verify=...)` in `orchestrate/registry_client/client.py` and `orchestrate/runtime/exec_engine.py`
+
+When `client_verify_server=false`, the SSL context returns `False` (no verification), allowing connections to servers with self-signed certificates. Set to `true` in production with a properly configured CA trust store.
+
+### 6.4 External API Protection
+
+The external API (`/api/v1/*`) is protected by mTLS at the TLS layer. No application-layer auth middleware is needed -- the TLS handshake rejects connections without valid client certificates before any HTTP request reaches the application.

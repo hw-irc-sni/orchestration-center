@@ -59,6 +59,45 @@ SPDX-License-Identifier: Apache-2.0
   - All endpoints are protected by both concurrency control (Semaphore) and token bucket rate limiting (RateLimiter). See each endpoint's constraints for details.
   - The default service port is **5001**.
 
+### Authentication
+
+The internal API (`/rest/v1/orchestrate/*`) supports optional token authentication with two modes:
+
+- **PostgreSQL mode**: Users are stored in the database with per-user salt hashing. Registration and user management endpoints are available.
+- **File mode**: A single password is configured via `access_password` in `server.conf`. Username is `admin` only.
+
+Authentication is enabled when `access_password` is set (file mode) or when the `users` table has at least one user (PostgreSQL mode). When enabled, all internal API requests must include a valid token.
+
+**Login:**
+```bash
+curl -X POST https://127.0.0.1:5001/rest/v1/orchestrate/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password":"<sha256_hash>"}'
+```
+Response:
+```json
+{"code": 200, "data": {"auth_required": true, "token": "<token>", "expires_in": 43200}}
+```
+
+**Authenticated request:**
+```bash
+curl -H "Authorization: Bearer <token>" https://127.0.0.1:5001/rest/v1/orchestrate/workflows
+```
+
+For SSE endpoints (EventSource cannot send headers), pass the token as a query parameter:
+```
+/rest/v1/orchestrate/execute?psop_id=xxx&access_token=<token>
+```
+
+Registration (PostgreSQL mode only):
+```bash
+curl -X POST https://127.0.0.1:5001/rest/v1/orchestrate/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"newuser","password":"<sha256_hash>"}'
+```
+
+The external API (`/api/v1/*`) is protected by mTLS at the TLS layer when `enable_https=true` and `verify_client=true`.
+
 ---
 
 ## 1. SOP Orchestration Interface
