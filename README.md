@@ -63,9 +63,9 @@ sequenceDiagram
 
     rect rgb(255, 250, 240)
         Note over User, Reg: 2. Workflow Creation (3 modes)
-        alt 2a. PDF Import
-            User->>FE: Upload PDF
-            FE->>+BE: POST /rest/v1/orchestrate/parse-pdf
+        alt 2a. PDF/BPMN Import
+            User->>FE: Upload PDF/BPMN
+            FE->>+BE: POST /rest/v1/orchestrate/parse-pdf (or parse-bpmn)
             BE->>LLM: Parse chapters & tasks
             LLM-->>BE: Structured preflow
             BE-->>-FE: PreFlow JSON
@@ -135,7 +135,7 @@ sequenceDiagram
 | Category | Capability |
 |----------|------------|
 | **Visual Designer** | React Flow-based drag-and-drop workflow builder with automatic Dagre layout |
-| **Multi-Mode Creation** | PDF document import, manual drag-and-drop, and natural-language-to-workflow via LLM |
+| **Multi-Mode Creation** | PDF/BPMN document import, manual drag-and-drop, and natural-language-to-workflow via LLM |
 | **A2A-T Negotiation** | Fulfillment negotiation between agents via a2a-t-sdk, context carried in Task.metadata |
 | **Execution Engine** | `DynamicWorkflowEngine` — async DAG traversal, parallel A2A calls, conditional LLM routing, SSE streaming |
 | **Semantic Search** | Natural-language retrieval of previously built workflows |
@@ -255,6 +255,7 @@ flowchart TB
 | `POST` | `/workflows` | Create workflow |
 | `DELETE` | `/workflows/{id}` | Delete workflow |
 | `POST` | `/parse-pdf` | Parse PDF SolutionPackage and extract PreFlow |
+| `POST` | `/parse-bpmn` | Parse BPMN flow and extract PreFlow |
 | `POST` | `/generate-from-preflow` | Generate PSOP from PreFlow |
 | `POST` | `/generate-from-intent` | Generate PSOP from intent |
 | `POST` | `/retrieve-by-intent` | Retrieve workflow by intent |
