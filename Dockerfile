@@ -44,7 +44,7 @@ COPY requirements.txt /tmp/requirements.txt
 
 RUN python3 -m venv /opt/venv --copies \
     && . /opt/venv/bin/activate \
-    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && pip install --no-cache-dir --default-timeout=180 --retries=10 -r /tmp/requirements.txt \
     && rm -rf /tmp/requirements.txt /root/.cache/pip
 
 FROM python:3.12-slim
