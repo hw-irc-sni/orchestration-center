@@ -26,6 +26,9 @@ FORWARDED_ALLOW_IPS = "forwarded_allow_ips"
 FLOW_CTL_PARSE_PDF = "flowcontrol.ratelimit.parse_pdf"
 FLOW_CTL_PARALLEL_PARSE_PDF = "flowcontrol.parallelism.parse_pdf"
 
+FLOW_CTL_PARSE_BPMN = "flowcontrol.ratelimit.parse_bpmn"
+FLOW_CTL_PARALLEL_PARSE_BPMN = "flowcontrol.parallelism.parse_bpmn"
+
 FLOW_CTL_PLAN = "flowcontrol.ratelimit.plan"
 FLOW_CTL_PARALLEL_PLAN = "flowcontrol.parallelism.plan"
 

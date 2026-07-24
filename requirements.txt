@@ -25,6 +25,7 @@ uvicorn>=0.42
 loguru>=0.7.3
 PyYAML>=6.0.3
 pymupdf
+defusedxml>=0.7.1
 limits>=5.8.0
 python-multipart>=0.0.24
 psycopg2-binary>=2.9.10

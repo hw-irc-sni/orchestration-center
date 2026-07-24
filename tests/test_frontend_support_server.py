@@ -27,6 +27,7 @@ _prev_testing = os.environ.get('TESTING')
 os.environ['TESTING'] = 'True'
 
 from orchestrate.server.frontend_support_server import app
+from orchestrate.bpmn_flows.parse_bpmn import BPMNParsingError, BPMNProcessNotFoundError
 
 
 def _cleanup_testing_env():
@@ -81,6 +82,14 @@ def mock_parser():
         yield mock_instance
 
 
+@pytest.fixture
+def mock_bpmn_parser():
+    """Mock BPMNFlowParser"""
+    with patch('orchestrate.server.frontend_support_server.BPMNFlowParser') as MockParser:
+        mock_instance = MockParser.return_value
+        yield mock_instance
+
+
 class TestParsePdfEndpoint:
     """Test /parse-pdf endpoint"""
 
@@ -89,51 +98,155 @@ class TestParsePdfEndpoint:
         response = client.post(f'{BASE}/parse-pdf')
         assert response.status_code == 422
 
-    @pytest.mark.skip(reason='PDF parsing tests are temporarily disabled')
     def test_parse_pdf_empty_filename(self, client):
-        """Test empty filename"""
-        response = client.post(f'{BASE}/parse-pdf', data={'file': (BytesIO(), '')})
-        assert response.status_code == 400
+        """Test empty filename.
 
-    @pytest.mark.skip(reason='PDF parsing tests are temporarily disabled')
+        httpx's files= helper drops an empty filename from the multipart
+        Content-Disposition header entirely, which FastAPI then rejects at
+        the schema-validation layer (422) before the handler ever runs. To
+        actually exercise the handler's own `if not file.filename` check we
+        need to send a raw multipart body with filename="" explicit.
+        """
+        body = (
+            b'--boundary123\r\n'
+            b'Content-Disposition: form-data; name="file"; filename=""\r\n'
+            b'Content-Type: application/octet-stream\r\n\r\n'
+            b'\r\n'
+            b'--boundary123--\r\n'
+        )
+        response = client.post(
+            f'{BASE}/parse-pdf',
+            content=body,
+            headers={'Content-Type': 'multipart/form-data; boundary=boundary123'},
+        )
+        assert response.status_code == 400
+        assert 'Filename is required' in response.json()['message']
+
     def test_parse_pdf_wrong_extension(self, client):
         """Test non-PDF file"""
-        response = client.post(f'{BASE}/parse-pdf', data={
-            'file': (BytesIO(b'test'), 'test.txt')
+        response = client.post(f'{BASE}/parse-pdf', files={
+            'file': ('test.txt', BytesIO(b'test'))
         })
         assert response.status_code == 400
         data = response.json()
-        assert 'Only PDF supported' in data['error']
+        assert 'Invalid filename format' in data['message']
 
-    @pytest.mark.skip(reason='PDF parsing tests are temporarily disabled')
+    def test_parse_pdf_not_pdf_content(self, client):
+        """Test a .pdf-named file whose content isn't a real PDF"""
+        response = client.post(f'{BASE}/parse-pdf', files={
+            'file': ('test.pdf', BytesIO(b'not a pdf'))
+        })
+        assert response.status_code == 400
+        assert 'not a valid PDF' in response.json()['message']
+
     def test_parse_pdf_success(self, client, mock_parser):
         """Test successful PDF parsing"""
         mock_parser.parse_pdf_chapter.return_value = "# Test Markdown"
 
-        with patch('orchestrate.server.frontend_support_server.PreFlow') as MockPreFlow:
-            mock_preflow = MagicMock()
-            mock_preflow.model_dump_json.return_value = '{"name": "test"}'
-            MockPreFlow.return_value = mock_preflow
+        response = client.post(f'{BASE}/parse-pdf', files={
+            'file': ('test.pdf', BytesIO(b'%PDF-1.4 test'))
+        })
 
-            response = client.post(f'{BASE}/parse-pdf', data={
-                'file': (BytesIO(b'%PDF-1.4 test'), 'test.pdf')
-            })
+        assert response.status_code == 200
+        assert response.json()['data']['steps_md'] == "# Test Markdown"
 
-            # Note: original code returns a dict, not jsonify; testing actual behavior
-            assert response.status_code == 200
-
-    @pytest.mark.skip(reason='PDF parsing tests are temporarily disabled')
     def test_parse_pdf_parse_failure(self, client, mock_parser):
-        """Test parsing failure"""
+        """Test parsing failure (chapter not found)"""
         mock_parser.parse_pdf_chapter.return_value = None
 
-        response = client.post(f'{BASE}/parse-pdf', data={
-            'file': (BytesIO(b'%PDF-1.4 test'), 'test.pdf')
+        response = client.post(f'{BASE}/parse-pdf', files={
+            'file': ('test.pdf', BytesIO(b'%PDF-1.4 test'))
         })
 
         assert response.status_code == 400
+        assert 'not found in PDF' in response.json()['message']
+
+
+class TestParseBpmnEndpoint:
+    """Test /parse-bpmn endpoint"""
+
+    def test_parse_bpmn_missing_file(self, client):
+        """Test missing file"""
+        response = client.post(f'{BASE}/parse-bpmn')
+        assert response.status_code == 422
+
+    def test_parse_bpmn_wrong_extension(self, client):
+        """Test filename with an unsupported extension"""
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.txt', BytesIO(b'<definitions></definitions>'))
+        })
+        assert response.status_code == 400
         data = response.json()
-        assert 'Parsing failed' in data['error']
+        assert 'Invalid filename format' in data['message']
+
+    def test_parse_bpmn_not_xml_content(self, client):
+        """Test a .bpmn-named file whose content isn't XML"""
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'not xml at all'))
+        })
+        assert response.status_code == 400
+        data = response.json()
+        assert 'not valid BPMN/XML' in data['message']
+
+    def test_parse_bpmn_success_all_processes(self, client, mock_bpmn_parser):
+        """Test successful parsing of all processes (no process_id given)"""
+        mock_bpmn_parser.parse_bpmn_all_processes.return_value = "# Test Markdown"
+
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'<definitions><process id="p1"/></definitions>'))
+        })
+
+        assert response.status_code == 200
+        mock_bpmn_parser.parse_bpmn_all_processes.assert_called_once()
+        mock_bpmn_parser.parse_bpmn_process.assert_not_called()
+        assert response.json()['data']['steps_md'] == "# Test Markdown"
+
+    def test_parse_bpmn_success_single_process(self, client, mock_bpmn_parser):
+        """Test successful parsing of a single process via process_id query param"""
+        mock_bpmn_parser.parse_bpmn_process.return_value = "# Single Process Markdown"
+
+        response = client.post(
+            f'{BASE}/parse-bpmn?process_id=proc-1',
+            files={'file': ('test.bpmn', BytesIO(b'<definitions><process id="proc-1"/></definitions>'))}
+        )
+
+        assert response.status_code == 200
+        mock_bpmn_parser.parse_bpmn_process.assert_called_once()
+        called_process_id = mock_bpmn_parser.parse_bpmn_process.call_args.args[1]
+        assert called_process_id == "proc-1"
+
+    def test_parse_bpmn_process_not_found(self, client, mock_bpmn_parser):
+        """Test 404 when the requested process_id doesn't exist in the file"""
+        mock_bpmn_parser.parse_bpmn_process.side_effect = BPMNProcessNotFoundError("proc-x not found")
+
+        response = client.post(
+            f'{BASE}/parse-bpmn?process_id=proc-x',
+            files={'file': ('test.bpmn', BytesIO(b'<definitions><process id="p1"/></definitions>'))}
+        )
+
+        assert response.status_code == 404
+
+    def test_parse_bpmn_parse_failure(self, client, mock_bpmn_parser):
+        """Test 400 when parsing raises BPMNParsingError"""
+        mock_bpmn_parser.parse_bpmn_all_processes.side_effect = BPMNParsingError("Invalid BPMN XML")
+
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'<definitions><process id="p1"/></definitions>'))
+        })
+
+        assert response.status_code == 400
+        assert 'Invalid BPMN XML' in response.json()['message']
+
+    def test_parse_bpmn_empty_result(self, client, mock_bpmn_parser):
+        """Test 400 when the parser returns no content"""
+        mock_bpmn_parser.parse_bpmn_all_processes.return_value = ""
+
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'<definitions></definitions>'))
+        })
+
+        assert response.status_code == 400
+        assert 'No BPMN process content' in response.json()['message']
 
 
 class TestPlanEndpoint:

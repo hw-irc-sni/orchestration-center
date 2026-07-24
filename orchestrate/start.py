@@ -182,6 +182,7 @@ if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info("  [Internal API - /rest/v1/orchestrate]")
     logger.info("  POST /parse-pdf              - Upload SolutionPackage PDF")
+    logger.info("  POST /parse-bpmn             - Upload BPMN flows")
     logger.info("  POST /generate-from-preflow  - SOP text -> PSOP")
     logger.info("  POST /generate-from-intent   - Intent -> PSOP")
     logger.info("  POST /retrieve-by-intent     - Semantic PSOP search")

@@ -1,13 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Upload, FileText, Link2, Clock, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, Upload, FileText, FileCode2, Link2, Clock, ExternalLink, Loader2 } from 'lucide-react';
 
 const MOCK_PACKAGES = [
     {
         id: 'pkg-001',
         filename: 'RAN_Energy_Saving_Solution_Package.pdf',
         importedAt: '2026-06-10T14:30:00Z',
-        pdfUrl: '#',
+        fileUrl: '#',
         workflowId: 'wf-energy-saving-01',
         workflowName: 'RAN Energy Saving Workflow',
     },
@@ -15,7 +15,7 @@ const MOCK_PACKAGES = [
         id: 'pkg-002',
         filename: 'SPN_Fault_Handling_Solution_Package.pdf',
         importedAt: '2026-06-09T09:15:00Z',
-        pdfUrl: '#',
+        fileUrl: '#',
         workflowId: 'wf-spn-fault-01',
         workflowName: 'SPN Fault Handling Workflow',
     },
@@ -23,9 +23,17 @@ const MOCK_PACKAGES = [
         id: 'pkg-003',
         filename: 'Home_Broadband_Complaint_Solution_Package.pdf',
         importedAt: '2026-06-08T16:45:00Z',
-        pdfUrl: '#',
+        fileUrl: '#',
         workflowId: 'wf-broadband-01',
         workflowName: 'Home Broadband Complaint Workflow',
+    },
+    {
+        id: 'pkg-004',
+        filename: 'Service_Fulfillment_Process.bpmn',
+        importedAt: '2026-06-07T11:20:00Z',
+        fileUrl: '#',
+        workflowId: 'wf-service-fulfillment-01',
+        workflowName: 'Service Fulfillment Workflow',
     },
 ];
 
@@ -37,7 +45,17 @@ const formatDate = (dateStr, locale) => {
     });
 };
 
-const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadingStatus, progress, t }) => {
+const getFileKind = (filename) => {
+    const match = /\.([^.]+)$/.exec(filename || '');
+    const ext = match ? match[1].toLowerCase() : '';
+    if (ext === 'pdf') return 'pdf';
+    if (ext === 'bpmn' || ext === 'xml') return 'bpmn';
+    return null;
+};
+
+const isSupportedFile = (file) => !!file && !!getFileKind(file.name);
+
+const SolutionPackages = ({ onBack, onImportFile, onViewWorkflow, loading, loadingStatus, progress, t }) => {
     const { i18n } = useTranslation();
     const fileInput = useRef(null);
     const [dragOver, setDragOver] = useState(false);
@@ -46,15 +64,15 @@ const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadin
         e.preventDefault();
         setDragOver(false);
         const file = e.dataTransfer.files[0];
-        if (file && file.type === 'application/pdf') {
-            onImportPdf(file);
+        if (isSupportedFile(file)) {
+            onImportFile(file);
         }
     };
 
     const handleFileSelect = (e) => {
         const file = e.target.files[0];
-        if (file && file.type === 'application/pdf') {
-            onImportPdf(file);
+        if (isSupportedFile(file)) {
+            onImportFile(file);
         }
         e.target.value = '';
     };
@@ -118,7 +136,7 @@ const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadin
                         type="file"
                         ref={fileInput}
                         className="hidden"
-                        accept=".pdf"
+                        accept=".pdf,.bpmn,.xml"
                         onChange={handleFileSelect}
                     />
                 </div>
@@ -135,56 +153,60 @@ const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadin
                 </div>
 
                 <div className="space-y-3">
-                    {MOCK_PACKAGES.map(pkg => (
-                        <div
-                            key={pkg.id}
-                            className="group p-5 rounded-2xl border border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 hover:border-amber-200 dark:hover:border-amber-700 hover:shadow-lg transition-all duration-300"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4 min-w-0 flex-1">
-                                    <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-500 shrink-0">
-                                        <FileText size={20} />
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                        <h4 className="text-sm font-black text-zinc-800 dark:text-zinc-200 truncate">
-                                            {pkg.filename}
-                                        </h4>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <Clock size={11} className="text-zinc-400" />
-                                            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                                                {formatDate(pkg.importedAt, i18n.language)}
-                                            </span>
+                    {MOCK_PACKAGES.map(pkg => {
+                        const kind = getFileKind(pkg.filename) || 'pdf';
+                        const isBpmn = kind === 'bpmn';
+                        return (
+                            <div
+                                key={pkg.id}
+                                className="group p-5 rounded-2xl border border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 hover:border-amber-200 dark:hover:border-amber-700 hover:shadow-lg transition-all duration-300"
+                            >
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-4 min-w-0 flex-1">
+                                        <div className={`p-2.5 rounded-xl shrink-0 ${isBpmn ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-500' : 'bg-red-50 dark:bg-red-900/20 text-red-500'}`}>
+                                            {isBpmn ? <FileCode2 size={20} /> : <FileText size={20} />}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <h4 className="text-sm font-black text-zinc-800 dark:text-zinc-200 truncate">
+                                                {pkg.filename}
+                                            </h4>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <Clock size={11} className="text-zinc-400" />
+                                                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                                                    {formatDate(pkg.importedAt, i18n.language)}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                <div className="flex items-center gap-3 shrink-0 ml-4">
-                                    <a
-                                        href={pkg.pdfUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400 transition-all"
-                                    >
-                                        <FileText size={13} />
-                                        PDF
-                                        <ExternalLink size={11} />
-                                    </a>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            onViewWorkflow(pkg.workflowId);
-                                        }}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider text-white bg-blue-500 hover:bg-blue-600 shadow-sm shadow-blue-500/20 transition-all"
-                                    >
-                                        <Link2 size={13} />
-                                        Workflow
-                                        <ChevronRightIcon size={11} />
-                                    </button>
+                                    <div className="flex items-center gap-3 shrink-0 ml-4">
+                                        <a
+                                            href={pkg.fileUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 transition-all ${isBpmn ? 'hover:bg-indigo-50 hover:text-indigo-500 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400' : 'hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400'}`}
+                                        >
+                                            {isBpmn ? <FileCode2 size={13} /> : <FileText size={13} />}
+                                            {isBpmn ? 'BPMN' : 'PDF'}
+                                            <ExternalLink size={11} />
+                                        </a>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onViewWorkflow(pkg.workflowId);
+                                            }}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider text-white bg-blue-500 hover:bg-blue-600 shadow-sm shadow-blue-500/20 transition-all"
+                                        >
+                                            <Link2 size={13} />
+                                            Workflow
+                                            <ChevronRightIcon size={11} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         </div>

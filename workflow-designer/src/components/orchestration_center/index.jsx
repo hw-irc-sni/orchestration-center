@@ -21,7 +21,7 @@ import {
     Plus, Upload, MessageSquare,
     ChevronRight, Sparkles, ChevronLeft, Code2, Trash2, Download, Eye, ArrowLeft
 } from 'lucide-react';
-import { getAgentCards, getWorkflow, getWorkflowById, handlePlan, parsePdf, generateWorkflowFromIntent, delWorkflowById, getTemplates, importTemplate } from "@/service/api.js";
+import { getAgentCards, getWorkflow, getWorkflowById, handlePlan, parsePdf, parseBpmn, generateWorkflowFromIntent, delWorkflowById, getTemplates, importTemplate } from "@/service/api.js";
 import { transformWorkflowToReactFlow } from "./workflow/utils/index.jsx";
 import UnifiedWorkflow from "../orchestration_center/workflow/index.jsx";
 import SolutionPackages from "./packages/index.jsx";
@@ -86,6 +86,22 @@ const LOADING_STAGES = {
     FINALIZING: 'orchestration.stage_finalizing',
     DELETING: 'orchestration.stage_deleting',
 };
+
+// Solution packages can be imported as either a PDF (chapter-based) or a BPMN/XML
+// process diagram; both resolve to a PreFlow which feeds the same planning pipeline.
+const getFileKind = (filename) => {
+    const match = /\.([^.]+)$/.exec(filename || '');
+    const ext = match ? match[1].toLowerCase() : '';
+    if (ext === 'pdf') return 'pdf';
+    if (ext === 'bpmn' || ext === 'xml') return 'bpmn';
+    return null;
+};
+
+const isSupportedSolutionFile = (file) => !!file && !!getFileKind(file.name);
+
+const parseSolutionFile = (file) => {
+    return getFileKind(file.name) === 'bpmn' ? parseBpmn(file) : parsePdf(file);
+};
 const OrchestrationCenter = ({ isDark }) => {
     const { t, i18n } = useTranslation();
     const [workflows, setWorkflows] = useState([]);
@@ -132,19 +148,15 @@ const OrchestrationCenter = ({ isDark }) => {
         const file = event.target.files[0];
 
         if (!file) return;
-        if (file.type !== "application/pdf") {
+        if (!isSupportedSolutionFile(file)) {
             event.target.value = ''; // Clear selection
             return;
         }
 
-        const formData = new FormData();
-        // Attention: Corresponding to backend request. files ['file ']
-        formData.append('file', file);
-
         setLoading(true);
         setLoadingStatus(LOADING_STAGES.PARSING); // Phase 1
         try {
-            const contentData = await parsePdf(file);
+            const contentData = await parseSolutionFile(file);
             const agentCards = await getAgentCards();
             setLoadingStatus(LOADING_STAGES.PLANNING);
             const agentCardsList = agentCards?.data || agentCards || [];
@@ -165,16 +177,13 @@ const OrchestrationCenter = ({ isDark }) => {
         }
     };
 
-    const handleImportPdfFromPackage = async (file) => {
-        if (!file || file.type !== "application/pdf") return;
-
-        const formData = new FormData();
-        formData.append('file', file);
+    const handleImportFileFromPackage = async (file) => {
+        if (!isSupportedSolutionFile(file)) return;
 
         setLoading(true);
         setLoadingStatus(LOADING_STAGES.PARSING);
         try {
-            const contentData = await parsePdf(file);
+            const contentData = await parseSolutionFile(file);
             const agentCards = await getAgentCards();
             setLoadingStatus(LOADING_STAGES.PLANNING);
             const agentCardsList = agentCards?.data || agentCards || [];
@@ -616,7 +625,7 @@ const OrchestrationCenter = ({ isDark }) => {
                 return (
                     <SolutionPackages
                         onBack={() => setActiveView('welcome')}
-                        onImportPdf={handleImportPdfFromPackage}
+                        onImportFile={handleImportFileFromPackage}
                         onViewWorkflow={(wfId) => {
                             setSelectedId(wfId);
                         }}
@@ -826,7 +835,7 @@ const OrchestrationCenter = ({ isDark }) => {
             </div>
 
             <input type="file" ref={fileInput} className="hidden"
-                accept=".pdf"
+                accept=".pdf,.bpmn,.xml"
                 onChange={handleFileChange} />
 
             {/* Delete confirmation dialog */}
