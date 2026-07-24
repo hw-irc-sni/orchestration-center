@@ -238,6 +238,95 @@ tail -f orchestrate.log
 cd {install_dir}/bin
    ./start_samples.sh
    ```
+## 2.5 Security Configuration
+
+The Orchestration Center supports multiple security configurations depending on your deployment scenario. Choose the appropriate level based on your environment.
+
+### Development Mode (No Security)
+
+For local development and testing, all security features can be disabled:
+
+```ini
+# etc/conf/server.conf
+enable_https=false
+verify_client=false
+access_password=
+persistence_mode=file
+```
+
+No login page, no HTTPS, no certificate required. All API endpoints are open.
+
+### Production Mode (HTTPS + Login)
+
+For deployment behind Nginx (recommended):
+
+1. **Configure Nginx with a CA-signed certificate** (from Let's Encrypt, Alibaba Cloud SSL, or your enterprise CA).
+2. **Enable login authentication** on the backend:
+
+   ```ini
+   # etc/conf/server.conf
+   enable_https=true          # Backend uses HTTPS (optional if behind Nginx)
+   verify_client=false         # No mTLS required for browser access
+   access_password=<sha256_hash>  # Set to enable login
+   persistence_mode=postgresql   # Use database for user management
+   ```
+
+   Generate the password hash:
+   ```bash
+   python generate_access_password.py
+   ```
+
+3. **Users and registration**: When `persistence_mode=postgresql`, the system automatically creates a default `admin` user (password: `OpenAN@2026`) on first startup. New users can self-register via the registration link on the login page. In `file` mode, registration is not available and only the `access_password` config is used.
+
+### High-Security Mode (mTLS + HTTPS + Login)
+
+For distributed deployments where services communicate over untrusted networks:
+
+```ini
+# etc/conf/server.conf
+enable_https=true
+verify_client=true            # Require client certificates for inbound connections
+client_verify_server=true      # Verify remote server certificates for outbound connections
+access_password=<sha256_hash>
+persistence_mode=postgresql
+```
+
+All services must present valid certificates signed by a trusted CA during TLS handshake. See the [Certificate Generation Guide](#) for cross-team certificate setup.
+
+### Security Configuration Summary
+
+| Config | Development | Production (Nginx) | High Security (Distributed) |
+|--------|------------|-------------------|---------------------------|
+| `enable_https` | false | true | true |
+| `verify_client` | false | false | true |
+| `client_verify_server` | false | false | true |
+| `access_password` | empty | SHA-256 hash | SHA-256 hash |
+| `persistence_mode` | file | postgresql | postgresql |
+| Registration | N/A | Enabled | Enabled |
+| Frontend | HTTP | HTTPS (via Nginx) | HTTPS (via Nginx) |
+| Nginx cert | N/A | CA-signed | CA-signed |
+
+### Generating Self-Signed Certificates
+
+For development or internal testing:
+
+```bash
+python generate_selfsign_cert.py etc/ssl serverAuth
+```
+
+This generates RSA 3072-bit certificates that comply with the built-in certificate validator. Copy the generated files to the expected names:
+
+```bash
+cd etc/ssl
+cp server_RSA.cer server.cer
+cp server_key_RSA.pem server_key.pem
+cp server.cer trust.cer
+echo -n "<password>" > cert_pwd
+```
+
+For production, use certificates from a trusted CA (Let's Encrypt, Alibaba Cloud SSL, or enterprise CA).
+
+
 ## 3. Usage
 
 ### 3.1 Prerequisites
@@ -267,11 +356,20 @@ When executing a workflow, the system pushes execution progress in real time via
 
 1. **Access the Orchestration Center Interface**
 
-   Open a browser and navigate to `http://localhost:3003`
+   Open a browser and navigate to the frontend URL (e.g., `http://localhost:3003` for development, or `https://your-domain.com` for production).
 
-2. **Configure the Service Address**
+2. **Login (if authentication is enabled)**
 
-   Click the gear icon in the upper-right corner of the interface, change the IP to the actual backend service IP of the Orchestration Center, change the port to the port the Orchestration Center is actually listening on, and click save.
+   If `access_password` is configured or `persistence_mode=postgresql`, the login page is displayed. Enter your username and password to access the main interface.
+
+   - Default admin credentials: username `admin`, password `OpenAN@2026` (in PostgreSQL mode, the admin user is auto-created on first startup).
+   - To register a new account (PostgreSQL mode only), click the registration link on the login page.
+   - In `file` mode, the username is `admin` and the password is the value set in `access_password` (before hashing).
+   - To change the admin password in file mode, regenerate the hash: `python generate_access_password.py`
+
+3. **Configure the Service Address (Optional)**
+
+   If the backend is not accessible at the default address, click the gear icon in the lower-right corner of the login page (or the upper-right corner on the main interface) to configure the backend IP, port, and connection mode (Direct IP or Nginx Gateway).
 
 3. **View the Agent Library**
 

@@ -8,6 +8,26 @@
       "skills": "Skill Center"
     }
   },
+  "login": {
+    "title": "Access Password",
+    "username_placeholder": "Username",
+    "placeholder": "Enter access password...",
+    "button": "Enter",
+    "loading": "Verifying...",
+    "error": "Login failed, please check your password",
+    "logout": "Logout",
+    "register_title": "Register",
+    "register_button": "Register",
+    "confirm_password": "Confirm password...",
+    "no_account": "No account?",
+    "have_account": "Already have an account?",
+    "password_mismatch": "Passwords do not match",
+    "password_too_short": "Password must be at least 8 characters",
+    "password_complexity": "Password must contain uppercase, lowercase, and a number",
+    "change_password": "Change Password",
+    "current_password": "Current Password",
+    "new_password": "New Password"
+  },
   "execution": {
     "title": "Execution Center",
     "execute": "Execute",

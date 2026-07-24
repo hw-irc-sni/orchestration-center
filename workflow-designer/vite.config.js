@@ -16,21 +16,26 @@
 //    under the License.
 import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 import path from 'path';
 import {visualizer} from 'rollup-plugin-visualizer';
 
 // https://vite.dev/config/
-export default defineConfig({
+export default ({ mode }) => defineConfig({
     base: '/',
     server: {
         port: 3003,
     },
-    plugins: [react(), visualizer({
+    plugins: [
+        react(),
+        ...(mode === 'https' ? [basicSsl()] : []),
+        visualizer({
         open: false,
         filename: 'stats.html',
         gzipSize: true,
         brotliSize: true,
-    }),],
+        }),
+    ],
     resolve: {
         alias: {
             '@': path.resolve(__dirname, 'src'),

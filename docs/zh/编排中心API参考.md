@@ -61,6 +61,45 @@ SPDX-License-Identifier: Apache-2.0
 
 ---
 
+### 认证
+
+内部 API（`/rest/v1/orchestrate/*`）支持可选的令牌认证，提供两种模式：
+
+- **PostgreSQL 模式**：用户存储在数据库中，使用每用户独立 salt 哈希。支持注册和用户管理接口。
+- **文件模式**：通过 `server.conf` 的 `access_password` 配置单一密码，用户名固定为 `admin`。
+
+设置 `access_password`（文件模式）或 `users` 表有用户（PostgreSQL 模式）时认证开启。开启后所有内部 API 请求必须携带有效令牌。
+
+**登录：**
+```bash
+curl -X POST https://127.0.0.1:5001/rest/v1/orchestrate/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password":"<sha256哈希值>"}'
+```
+响应：
+```json
+{"code": 200, "data": {"auth_required": true, "token": "<令牌>", "expires_in": 43200}}
+```
+
+**携带令牌的请求：**
+```bash
+curl -H "Authorization: Bearer <令牌>" https://127.0.0.1:5001/rest/v1/orchestrate/workflows
+```
+
+SSE 端点（EventSource 无法发送请求头），通过查询参数传递令牌：
+```
+/rest/v1/orchestrate/execute?psop_id=xxx&access_token=<令牌>
+```
+
+注册新用户（仅 PostgreSQL 模式）：
+```bash
+curl -X POST https://127.0.0.1:5001/rest/v1/orchestrate/auth/register \\
+  -H "Content-Type: application/json" \\
+  -d '{"username":"newuser","password":"<sha256哈希值>"}'
+```
+
+外部 API（`/api/v1/*`）在 `enable_https=true` 且 `verify_client=true` 时受 mTLS 保护。
+
 ## 1. SOP 编排接口
 
 - 典型场景

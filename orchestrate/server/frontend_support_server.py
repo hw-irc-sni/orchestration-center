@@ -16,6 +16,7 @@
 #    under the License.
 
 import os
+import secrets
 import tempfile
 import json
 import re
@@ -61,6 +62,11 @@ from orchestrate.server.middleware import ConnectionLimitMiddleware, TimeoutMidd
 from orchestrate.server.shared_handlers import SharedHandlers
 from orchestrate.solution_package.parse_flow import SolutionPackageParser
 from orchestrate.bpmn_flows.parse_bpmn import BPMNFlowParser, BPMNParsingError, BPMNProcessNotFoundError
+from orchestrate.server.auth import (
+    is_auth_enabled,
+    get_session_store,
+    auth_middleware,
+)
 
 app = FastAPI(title="Workflow Orchestration API", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -79,6 +85,18 @@ app.add_middleware(
 
 app.add_middleware(ConnectionLimitMiddleware, max_connections=int(config.get(CONN_MAX, 200)))
 app.add_middleware(TimeoutMiddleware, timeout_seconds=int(config.get(CONN_TIMEOUT, 300)))
+
+@app.on_event("startup")
+async def _setup_exception_handler():
+    """Register asyncio exception handler to suppress WinError 10054 on Windows."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    def _handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError):
+            return
+        loop.default_exception_handler(context)
+    loop.set_exception_handler(_handler)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -143,6 +161,8 @@ async def security_middleware(request: Request, call_next):
             return Response(content="Bad Request", status_code=status.HTTP_400_BAD_REQUEST)
     return await call_next(request)
 
+app.middleware("http")(auth_middleware)
+
 # ──── Request models ────
 
 class PlanRequest(BaseModel):
@@ -162,7 +182,141 @@ class RetrieveIntentRequest(BaseModel):
 # ──── Router ────
 router = APIRouter(prefix="/rest/v1/orchestrate")
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---- Access authentication ----
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64, description="Username")
+    password: str = Field(..., min_length=1, max_length=256, description="Password (SHA-256 hashed by frontend)")
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64, description="Username")
+    password: str = Field(..., min_length=6, max_length=256, description="Password (SHA-256 hashed by frontend)")
+
+@router.post("/auth/login")
+async def login(request: LoginRequest):
+    if not is_auth_enabled():
+        return ok(data={"auth_required": False, "token": None}, message="Authentication disabled")
+    conf = get_conf()
+    is_db_mode = conf.get("persistence_mode", "file").lower() == "postgresql"
+    if is_db_mode:
+        from database.utils.user_store import authenticate_user
+        user = authenticate_user(request.username, request.password)
+        if user is not None:
+            token, ttl = get_session_store().create(user["username"])
+            logger.info(f"Login successful (DB): {user['username']}")
+            return ok(data={"auth_required": True, "token": token, "expires_in": ttl, "username": user["username"], "role": user.get("role", "user")})
+        logger.warning(f"Login failed: username={request.username}")
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    # File mode: config-based auth
+    stored = conf.get("access_password", "")
+    if request.username == "admin" and stored and secrets.compare_digest(request.password, stored):
+        token, ttl = get_session_store().create("admin")
+        logger.info("Login successful (config): admin")
+        return ok(data={"auth_required": True, "token": token, "expires_in": ttl, "username": "admin", "role": "admin"})
+    logger.warning(f"Login failed: username={request.username}")
+    raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+@router.post("/auth/register")
+async def register(request: RegisterRequest):
+    conf = get_conf()
+    if conf.get("persistence_mode", "file").lower() != "postgresql":
+        raise HTTPException(status_code=400, detail="Registration requires PostgreSQL persistence mode")
+    import re
+    if not re.fullmatch(r"^[a-zA-Z][a-zA-Z0-9_-]{2,63}$", request.username):
+        raise HTTPException(status_code=400, detail="Username must start with a letter and contain only letters, digits, underscores or hyphens (3-64 chars)")
+    from database.utils.user_store import create_user, user_exists
+    if user_exists(request.username):
+        raise HTTPException(status_code=409, detail="Username already exists")
+    if create_user(request.username, request.password):
+        logger.info(f"User registered: {request.username}")
+        return created(data={"username": request.username}, message="User registered successfully")
+    raise HTTPException(status_code=500, detail="Failed to register user")
+
+@router.post("/auth/logout")
+async def logout(request: Request):
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+    if token:
+        get_session_store().revoke(token)
+    return ok(message="Logged out")
+
+@router.get("/auth/check")
+async def auth_check(request: Request):
+    conf = get_conf()
+    registration_enabled = conf.get("persistence_mode", "file").lower() == "postgresql"
+    if not is_auth_enabled():
+        return ok(data={"auth_required": False, "registration_enabled": registration_enabled})
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+    if token and get_session_store().validate(token):
+        username = get_session_store().get_username(token)
+        return ok(data={"auth_required": True, "authenticated": True, "username": username, "registration_enabled": registration_enabled})
+    return ok(data={"auth_required": True, "authenticated": False, "registration_enabled": registration_enabled})
+
+@router.get("/auth/users")
+async def list_users_endpoint():
+    from database.utils.user_store import list_users
+    return ok(data=list_users())
+
+@router.delete("/auth/users/{username}")
+async def delete_user_endpoint(username: str):
+    if username == "admin":
+        raise HTTPException(status_code=403, detail="Cannot delete admin user")
+    from database.utils.user_store import delete_user
+    if delete_user(username):
+        logger.info(f"User deleted: {username}")
+        return ok(message=f"User '{username}' deleted")
+    raise HTTPException(status_code=404, detail="User not found")
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(..., min_length=1, max_length=256, description="Current password (SHA-256 hashed)")
+    new_password: str = Field(..., min_length=6, max_length=256, description="New password (SHA-256 hashed)")
+
+@router.post("/auth/change-password")
+async def change_password(request: ChangePasswordRequest, http_request: Request):
+    """Change the current user's password. Requires a valid token."""
+    conf = get_conf()
+    is_db_mode = conf.get("persistence_mode", "file").lower() == "postgresql"
+    auth_header = http_request.headers.get("Authorization", "")
+    token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+    username = get_session_store().get_username(token) if token else None
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if is_db_mode:
+        from database.utils.user_store import authenticate_user, update_password
+        # Verify old password
+        user = authenticate_user(username, request.old_password)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        if update_password(username, request.new_password):
+            logger.info(f"Password changed for user '{username}'")
+            return ok(message="Password changed successfully")
+        raise HTTPException(status_code=500, detail="Failed to change password")
+    # File mode: update access_password in server.conf
+    stored = conf.get("access_password", "")
+    if not secrets.compare_digest(request.old_password, stored):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    # Write new password hash to server.conf
+    conf_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "etc", "conf", "server.conf")
+    if os.path.exists(conf_path):
+        with open(conf_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        updated = False
+        for i, line in enumerate(lines):
+            if line.strip().startswith("access_password="):
+                lines[i] = f"access_password={request.new_password}\n"
+                updated = True
+                break
+        if updated:
+            with open(conf_path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            # Invalidate the config cache
+            get_conf.cache_clear()
+            logger.info("Password changed (file mode): access_password updated in server.conf")
+            return ok(message="Password changed successfully")
+    raise HTTPException(status_code=500, detail="Failed to change password")
+
 # Workflow CRUD
 # ═══════════════════════════════════════════════════════════════════════════════
 

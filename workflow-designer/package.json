@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "dev:https": "vite --host --mode https",
     "build": "vite build",
     "lint": "eslint .",
     "coverage": "vitest run --coverage",
@@ -12,6 +13,7 @@
   },
   "dependencies": {
     "@tisoap/react-flow-smart-edge": "^4.0.1",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@xyflow/react": "^12.10.1",
     "axios": "^1.16.0",
     "dagre": "^0.8.5",

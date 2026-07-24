@@ -21,6 +21,8 @@ from a2a.types import AgentCard
 from google.protobuf.json_format import MessageToDict
 from loguru import logger
 
+from common.ssl.client_ssl_context import create_client_ssl_context
+
 
 class AgentRegistryClient:
     """
@@ -34,7 +36,17 @@ class AgentRegistryClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
+            ssl_context = create_client_ssl_context()
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout, verify=ssl_context, follow_redirects=True,
+                # The registry center sets timeout_keep_alive=0 (Connection:
+                # close after each response).  Disabling keepalive entirely
+                # avoids "Server disconnected" errors from stale pooled
+                # connections.
+                limits=httpx.Limits(
+                    max_keepalive_connections=0, keepalive_expiry=0.0
+                ),
+            )
         return self._client
 
     async def close(self):

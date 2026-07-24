@@ -16,6 +16,7 @@
 #    under the License.
 
 import os
+import asyncio
 import ssl
 import sys
 
@@ -31,6 +32,7 @@ from common.util.cipher_util import DEFAULT_ENCODING
 from common.util.conf_util import get_conf_singleton, set_ssl_folder_permissions, load_cert_password
 from common.util.config_util import get_conf
 from database.utils.table_creation import create_tables
+from database.utils.user_store import seed_admin_if_empty
 from orchestrate.server.frontend_support_server import app
 
 def customized_create_ssl_context(certfile: str | os.PathLike[str],
@@ -136,13 +138,34 @@ class CustomUvicornServer:
             ssl_cert_reqs=self.conf_obj.verify_client,
             ssl_ciphers=CipherConverter.convert(self.server_config.get(TLS_CIPHER)),
             timeout_keep_alive=0,
-            timeout_graceful_shutdown=int(self.server_config.get(CONN_TIMEOUT, 30)),
+            timeout_graceful_shutdown=5,
             log_level="info",
             proxy_headers=True
         )
         server = uvicorn.Server(server_config)
         record_startup_log()
         server.run()
+
+def _suppress_connection_reset_handler():
+    """Silence Windows asyncio ConnectionResetError (WinError 10054).
+
+    On Windows, when a client closes the TCP connection before the server
+    finishes shutting down the socket, asyncio's ProactorEventLoop raises
+    ConnectionResetError in the callback.  This is harmless noise that floods
+    the log.  We install a custom exception handler on the event loop to
+    suppress it.
+    """
+    def _handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError):
+            return
+        loop.default_exception_handler(context)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.set_exception_handler(_handler)
+    except RuntimeError:
+        logger.warning("Could not set asyncio exception handler")
 
 def main():
     """
@@ -153,8 +176,16 @@ def main():
     is_enable_https = str(is_https).lower() == 'true'
     if server_config.get('persistence_mode', 'file').lower() != 'file':
         create_tables()
+        # Seed default admin user if users table is empty.
+        # The password stored is the SHA-256 hash, matching what the frontend sends.
+        import hashlib
+        default_pw_hash = hashlib.sha256(b"OpenAN@2026").hexdigest()
+        if seed_admin_if_empty(default_pw_hash):
+            logger.info("Default admin user created (password: OpenAN@2026)")
+        else:
+            logger.info("Users already exist, skipping admin seed")
     if not is_enable_https:
-        uvicorn.run(app, host=server_config.get('ip', "127.0.0.1"), port=int(server_config.get('port', 5001)))
+        uvicorn.run(app, host=server_config.get('ip', "127.0.0.1"), port=int(server_config.get('port', 5001)), timeout_graceful_shutdown=5)
     else:
         try:
             conf_obj = get_conf_singleton()

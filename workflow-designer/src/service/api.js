@@ -20,6 +20,20 @@ const STORAGE_KEY = 'server_config';
 export const defaultIp = '127.0.0.1';
 export const defaultPort = '5001';
 export const defaultGateway = '/api/orchestrate';
+ 
+ const TOKEN_KEY = 'access_token';
+ 
+ export const getAuthToken = () => localStorage.getItem(TOKEN_KEY);
+ export const setAuthToken = (token) => {
+     if (token) {
+         localStorage.setItem(TOKEN_KEY, token);
+     } else {
+         localStorage.removeItem(TOKEN_KEY);
+    }
+};
+
+ // Protocol follows the current page: HTTPS page -> https://, otherwise http://
+export const defaultProtocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
 
 const trimTrailingSlash = (url) => url.replace(/\/$/, '');
 
@@ -33,29 +47,44 @@ export const getBaseUrl = () => {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
             const config = JSON.parse(saved);
-            if (config.mode === 'ip') {
-                const ip = config.ip || defaultIp;
-                const port = config.port || defaultPort;
-                return `http://${ip}:${port}`;
-            }
+          if (config.mode === 'ip') {
+              const ip = config.ip || defaultIp;
+              const port = config.port || defaultPort;
+                return `${defaultProtocol}${ip}:${port}`;
+           }
             return trimTrailingSlash(config.nginxUrl || config.gatewayUrl || defaultGateway);
         }
-        if (isStandardPort()) {
-            return trimTrailingSlash(defaultGateway);
-        }
-        return `http://${defaultIp}:${defaultPort}`;
-    } catch (e) {
-        return `http://${defaultIp}:${defaultPort}`;
-    }
+       if (isStandardPort()) {
+           return trimTrailingSlash(defaultGateway);
+       }
+        return `${defaultProtocol}${defaultIp}:${defaultPort}`;
+   } catch (e) {
+        return `${defaultProtocol}${defaultIp}:${defaultPort}`;
+   }
 }
 
 const ORCHESTRATE_BASE = () => `${getBaseUrl()}/rest/v1/orchestrate`;
 
 const api = axios.create({ timeout: 120000 });
 
+ // Inject auth token into every request
+ api.interceptors.request.use((config) => {
+     const token = getAuthToken();
+     if (token) {
+         config.headers.Authorization = `Bearer ${token}`;
+     }
+     return config;
+ });
+ 
 api.interceptors.response.use(
     (response) => response.data,
-    (error) => Promise.reject(error)
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            setAuthToken(null);
+            window.dispatchEvent(new Event('auth-expired'));
+        }
+        return Promise.reject(error);
+    }
 );
 
 // ──── Agent Cards ────
@@ -165,6 +194,10 @@ export async function matchWorkflowsTopN(intent, topN = 3) {
 export function getStartProcessStreamUrl(psopId, userIntent = '', lang = '') {
     const base = `${ORCHESTRATE_BASE()}/execute?psop_id=${psopId}`;
     const params = [];
+    const token = getAuthToken();
+    if (token) {
+        params.push(`access_token=${encodeURIComponent(token)}`);
+    }
     if (userIntent) {
         params.push(`user_intent=${encodeURIComponent(userIntent)}`);
     }
@@ -189,4 +222,58 @@ export async function getExecutionRecord(executionId) {
 
 export async function deleteExecutionRecord(executionId) {
     return api.delete(`${ORCHESTRATE_BASE()}/execution-records/${executionId}`);
+}
+ 
+ // ---- Access authentication ----
+ 
+export async function authCheck() {
+    const resp = await api.get(`${ORCHESTRATE_BASE()}/auth/check`);
+    return resp.data;
+}
+ 
+async function sha256(text) {
+    const data = new TextEncoder().encode(text);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function login(username, password) {
+    const hashed = await sha256(password);
+    const body = await api.post(`${ORCHESTRATE_BASE()}/auth/login`, { username, password: hashed });
+    if (body.data && body.data.token) {
+         setAuthToken(body.data.token);
+     }
+     return body.data;
+ }
+ 
+export async function logout() {
+    try {
+        await api.post(`${ORCHESTRATE_BASE()}/auth/logout`);
+    } finally {
+        setAuthToken(null);
+    }
+}
+ 
+export async function register(username, password) {
+    const hashed = await sha256(password);
+    const body = await api.post(`${ORCHESTRATE_BASE()}/auth/register`, { username, password: hashed });
+    return body.data;
+}
+ 
+export async function listUsers() {
+    const resp = await api.get(`${ORCHESTRATE_BASE()}/auth/users`);
+    return resp.data;
+}
+ 
+export async function deleteUser(username) {
+    return api.delete(`${ORCHESTRATE_BASE()}/auth/users/${username}`);
+}
+
+export async function changePassword(oldPassword, newPassword) {
+    const oldHash = await sha256(oldPassword);
+    const newHash = await sha256(newPassword);
+    return api.post(`${ORCHESTRATE_BASE()}/auth/change-password`, {
+        old_password: oldHash,
+        new_password: newHash,
+    });
 }

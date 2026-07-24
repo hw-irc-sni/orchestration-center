@@ -28,6 +28,7 @@ from typing import Dict, Any, Optional, Callable, List
 import httpx
 from a2a.client import ClientConfig, ClientFactory
 from a2a.client.auth import AuthInterceptor
+from common.ssl.client_ssl_context import create_client_ssl_context
 from a2a.client.auth import CredentialService
 from a2a.helpers import new_text_message
 from a2a.types import SendMessageRequest
@@ -202,9 +203,14 @@ class DynamicWorkflowEngine:
                     f"headers={dict(request.headers)}"
                 )
 
-            verify_ssl = os.environ.get("AGENT_VERIFY_SSL", "false").lower() != "false"
+            # Delegates to the client SSL context factory which honours the
+            # client_verify_server config (CA trust store, mTLS client cert,
+            # CRL, cipher suites).  Defaults to False (no verification) for
+            # backward compatibility; set client_verify_server=true in
+            # etc/conf/server.conf to enforce TLS verification.
+            ssl_ctx = create_client_ssl_context()
             self._httpx_client = httpx.AsyncClient(
-                timeout=timeout_config, verify=verify_ssl, follow_redirects=True,
+                timeout=timeout_config, verify=ssl_ctx, follow_redirects=True,
                 event_hooks={"request": [_log_request]},
             )
         return self._httpx_client

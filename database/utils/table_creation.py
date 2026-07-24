@@ -24,10 +24,10 @@ def create_tables():
     create_psop_sql = """
                        CREATE TABLE IF NOT EXISTS psop
                        (
-                            id           VARCHAR(1024) PRIMARY KEY, -- Primary key ID
-                            name         VARCHAR(1024) NOT NULL,    -- Name, cannot be null
-                            description  VARCHAR(1024),                     -- Description
-                            psop_content    TEXT             -- TEXT type suitable for long text
+                            id           VARCHAR(1024) PRIMARY KEY,
+                            name         VARCHAR(1024) NOT NULL,
+                            description  VARCHAR(1024),
+                            psop_content    TEXT
                        )
                        """
     create_execution_record_sql = """
@@ -43,6 +43,17 @@ def create_tables():
                             record_content  TEXT
                        )
                        """
+    create_users_sql = """
+                       CREATE TABLE IF NOT EXISTS users
+                       (
+                            id            SERIAL PRIMARY KEY,
+                            username      VARCHAR(64) UNIQUE NOT NULL,
+                            password_hash VARCHAR(128) NOT NULL,
+                            salt          VARCHAR(64) NOT NULL,
+                            role          VARCHAR(16) DEFAULT 'user',
+                            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                       )
+                       """
     conn = create_connection()
     if conn is None:
         raise RuntimeError("Unable to create database connection; tables not created")
@@ -53,6 +64,9 @@ def create_tables():
         _, err2 = execute_query(conn, create_execution_record_sql)
         if err2:
             raise RuntimeError(f"Failed to create execution_records table: {err2}")
-        logger.info("Database tables verified/created: psop, execution_records")
+        _, err3 = execute_query(conn, create_users_sql)
+        if err3:
+            raise RuntimeError(f"Failed to create users table: {err3}")
+        logger.info("Database tables verified/created: psop, execution_records, users")
     finally:
         conn.close()

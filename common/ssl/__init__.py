@@ -14,14 +14,3 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
-DEFAULT_ENCODING = 'UTF-8'
-
-
-def decrypt(ciphertext: str) -> bytes:
-    return ciphertext.encode(DEFAULT_ENCODING)
-
-
-def encrypt(plaintext: str) -> str:
-    # no-op stub; override with a real implementation for production
-    return plaintext
