@@ -27,6 +27,7 @@ _prev_testing = os.environ.get('TESTING')
 os.environ['TESTING'] = 'True'
 
 from orchestrate.server.frontend_support_server import app
+from orchestrate.bpmn_flows.parse_bpmn import BPMNParsingError, BPMNProcessNotFoundError
 
 
 def _cleanup_testing_env():
@@ -77,6 +78,14 @@ def mock_agent_lib():
 def mock_parser():
     """Mock SolutionPackageParser"""
     with patch('orchestrate.server.frontend_support_server.SolutionPackageParser') as MockParser:
+        mock_instance = MockParser.return_value
+        yield mock_instance
+
+
+@pytest.fixture
+def mock_bpmn_parser():
+    """Mock BPMNFlowParser"""
+    with patch('orchestrate.server.frontend_support_server.BPMNFlowParser') as MockParser:
         mock_instance = MockParser.return_value
         yield mock_instance
 
@@ -134,6 +143,93 @@ class TestParsePdfEndpoint:
         assert response.status_code == 400
         data = response.json()
         assert 'Parsing failed' in data['error']
+
+
+class TestParseBpmnEndpoint:
+    """Test /parse-bpmn endpoint"""
+
+    def test_parse_bpmn_missing_file(self, client):
+        """Test missing file"""
+        response = client.post(f'{BASE}/parse-bpmn')
+        assert response.status_code == 422
+
+    def test_parse_bpmn_wrong_extension(self, client):
+        """Test filename with an unsupported extension"""
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.txt', BytesIO(b'<definitions></definitions>'))
+        })
+        assert response.status_code == 400
+        data = response.json()
+        assert 'Invalid filename format' in data['message']
+
+    def test_parse_bpmn_not_xml_content(self, client):
+        """Test a .bpmn-named file whose content isn't XML"""
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'not xml at all'))
+        })
+        assert response.status_code == 400
+        data = response.json()
+        assert 'not valid BPMN/XML' in data['message']
+
+    def test_parse_bpmn_success_all_processes(self, client, mock_bpmn_parser):
+        """Test successful parsing of all processes (no process_id given)"""
+        mock_bpmn_parser.parse_bpmn_all_processes.return_value = "# Test Markdown"
+
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'<definitions><process id="p1"/></definitions>'))
+        })
+
+        assert response.status_code == 200
+        mock_bpmn_parser.parse_bpmn_all_processes.assert_called_once()
+        mock_bpmn_parser.parse_bpmn_process.assert_not_called()
+        assert response.json()['data']['steps_md'] == "# Test Markdown"
+
+    def test_parse_bpmn_success_single_process(self, client, mock_bpmn_parser):
+        """Test successful parsing of a single process via process_id query param"""
+        mock_bpmn_parser.parse_bpmn_process.return_value = "# Single Process Markdown"
+
+        response = client.post(
+            f'{BASE}/parse-bpmn?process_id=proc-1',
+            files={'file': ('test.bpmn', BytesIO(b'<definitions><process id="proc-1"/></definitions>'))}
+        )
+
+        assert response.status_code == 200
+        mock_bpmn_parser.parse_bpmn_process.assert_called_once()
+        called_process_id = mock_bpmn_parser.parse_bpmn_process.call_args.args[1]
+        assert called_process_id == "proc-1"
+
+    def test_parse_bpmn_process_not_found(self, client, mock_bpmn_parser):
+        """Test 404 when the requested process_id doesn't exist in the file"""
+        mock_bpmn_parser.parse_bpmn_process.side_effect = BPMNProcessNotFoundError("proc-x not found")
+
+        response = client.post(
+            f'{BASE}/parse-bpmn?process_id=proc-x',
+            files={'file': ('test.bpmn', BytesIO(b'<definitions><process id="p1"/></definitions>'))}
+        )
+
+        assert response.status_code == 404
+
+    def test_parse_bpmn_parse_failure(self, client, mock_bpmn_parser):
+        """Test 400 when parsing raises BPMNParsingError"""
+        mock_bpmn_parser.parse_bpmn_all_processes.side_effect = BPMNParsingError("Invalid BPMN XML")
+
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'<definitions><process id="p1"/></definitions>'))
+        })
+
+        assert response.status_code == 400
+        assert 'Invalid BPMN XML' in response.json()['message']
+
+    def test_parse_bpmn_empty_result(self, client, mock_bpmn_parser):
+        """Test 400 when the parser returns no content"""
+        mock_bpmn_parser.parse_bpmn_all_processes.return_value = ""
+
+        response = client.post(f'{BASE}/parse-bpmn', files={
+            'file': ('test.bpmn', BytesIO(b'<definitions></definitions>'))
+        })
+
+        assert response.status_code == 400
+        assert 'No BPMN process content' in response.json()['message']
 
 
 class TestPlanEndpoint:

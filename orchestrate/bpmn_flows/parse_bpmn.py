@@ -20,6 +20,8 @@ from typing import Dict, List, Tuple, Any, Optional
 import xml.etree.ElementTree as ET
 import concurrent.futures
 
+from defusedxml.common import DefusedXmlException
+from defusedxml.ElementTree import parse as parse_untrusted_xml
 from loguru import logger
 
 from common.llm import get_llm_instance
@@ -61,6 +63,11 @@ class BPMNFlowParser:
         "complexGateway",
     }
 
+    # Caps the number of paths build_ordered_paths() will enumerate. Without a
+    # cap, a diagram with N gateways chained in series can produce up to 2^N
+    # paths, letting a small, well-formed upload exhaust CPU/memory.
+    MAX_DISCOVERED_PATHS = 500
+
     def __init__(self):
         self.llm = get_llm_instance()
 
@@ -85,8 +92,13 @@ class BPMNFlowParser:
             raise BPMNParsingError(f"BPMN file does not exist: {bpmn_path}")
 
         try:
-            tree = ET.parse(path)
+            # Untrusted, user-uploaded XML: parse with defusedxml to reject DTDs
+            # that declare entities (billion-laughs) or reference external/network
+            # resources (XXE) instead of the stdlib xml.etree.ElementTree parser.
+            tree = parse_untrusted_xml(str(path))
             return tree.getroot()
+        except DefusedXmlException as e:
+            raise BPMNParsingError(f"Disallowed BPMN XML content: {e}") from e
         except ET.ParseError as e:
             raise BPMNParsingError(f"Invalid BPMN XML: {e}") from e
         except Exception as e:
@@ -241,8 +253,14 @@ class BPMNFlowParser:
         ]
 
         paths: List[List[str]] = []
+        truncated = False
 
         def walk(node_id: str, current_path: List[str], visited: set) -> None:
+            nonlocal truncated
+            if len(paths) >= cls.MAX_DISCOVERED_PATHS:
+                truncated = True
+                return
+
             if node_id in visited:
                 paths.append(current_path + [f"{node_id} [cycle detected]"])
                 return
@@ -259,15 +277,27 @@ class BPMNFlowParser:
                 return
 
             for flow in outgoing_by_node[node_id]:
+                if len(paths) >= cls.MAX_DISCOVERED_PATHS:
+                    truncated = True
+                    break
                 target_ref = flow.get("target_ref")
                 if target_ref:
                     walk(target_ref, next_path, visited | {node_id})
 
         for start_node in start_nodes:
+            if len(paths) >= cls.MAX_DISCOVERED_PATHS:
+                truncated = True
+                break
             walk(start_node, [], set())
 
         if not paths and nodes:
             logger.warning("No start event found; ordered paths could not be built")
+
+        if truncated:
+            logger.warning(
+                f"Path enumeration truncated at {cls.MAX_DISCOVERED_PATHS} paths; "
+                "diagram has more branches than can be safely enumerated"
+            )
 
         return paths
 
