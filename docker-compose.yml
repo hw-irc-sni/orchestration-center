@@ -1,9 +1,7 @@
-version: "3.8"
-
 services:
   orchestration-center:
     build: .
-    container_name: orchestration-center
+    container_name: openan-orchestration-center
     ports:
       - "5001:5001"
     volumes:
@@ -11,11 +9,19 @@ services:
       - ./etc/ssl:/opt/orchestration-center/etc/ssl
       - ./log:/opt/orchestration-center/log
     environment:
-      - ORCH_IP=0.0.0.0
-      - ORCH_PORT=5001
-      - ORCH_ENABLE_HTTPS=false
-      - ORCH_FORWARDED_ALLOW_IPS=*
-      - PERSISTENCE_MODE=file
+      - ORCH_IP=${ORCH_IP:-0.0.0.0}
+      - ORCH_PORT=${ORCH_PORT:-5001}
+      - ORCH_ENABLE_HTTPS=${ORCH_ENABLE_HTTPS:-false}
+      - ORCH_FORWARDED_ALLOW_IPS=${ORCH_FORWARDED_ALLOW_IPS:-*}
+      - PERSISTENCE_MODE=${PERSISTENCE_MODE:-file}
+      # registry-center is HTTPS-by-default in production (see that repo's
+      # docker-compose.yml); client_verify_server defaults false so the
+      # self-signed cert doesn't need trusting. Requires registry-center's
+      # openan-registry-center container reachable on openan-net — start
+      # that stack first.
+      - AGENT_REGISTRY_URL=${AGENT_REGISTRY_URL:-https://openan-registry-center:5000}
+    networks:
+      - openan-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/rest/v1/orchestrate/agent-cards"]
       interval: 30s
@@ -36,14 +42,20 @@ services:
   #
   # postgres:
   #   image: postgres:15-alpine
-  #   container_name: orchestration-postgres
+  #   container_name: openan-orchestration-center-postgres
   #   environment:
-  #     - POSTGRES_DB=orchestration_center
-  #     - POSTGRES_USER=opena2a_t
-  #     - POSTGRES_PASSWORD=openA2A_T
+  #     - POSTGRES_DB=${DB_NAME:-orchestration_center}
+  #     - POSTGRES_USER=${DB_USERNAME:-opena2a_t}
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD:-openA2A_T}
   #   volumes:
   #     - pgdata:/var/lib/postgresql/data
+  #   networks:
+  #     - openan-net
   #   restart: unless-stopped
   #
   # volumes:
   #   pgdata:
+
+networks:
+  openan-net:
+    external: true
