@@ -1,0 +1,11 @@
+# Development override for docker-compose.yml. Not auto-loaded — run with:
+#   docker compose -f docker-compose.yml -f docker-compose-dev.yml up -d
+#
+# Points at registry-center's dev stack, which disables HTTPS (see
+# registry-center/docker-compose-dev.yml) — so this must use http, not the
+# production file's https, or every agent-cards request will fail the TLS
+# handshake against a plaintext listener.
+services:
+  orchestration-center:
+    environment:
+      - AGENT_REGISTRY_URL=${AGENT_REGISTRY_URL:-http://openan-registry-center:5000}

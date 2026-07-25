@@ -188,6 +188,48 @@ python -m samples.start_agents_server
 | Frontend | Open `http://localhost:3003` in browser |
 | Sample Agents | Agent startup messages in console |
 
+## Docker Deployment
+
+Orchestration Center is one of three OpenAN components meant to run together
+(`orchestration-center`, [`registry-center`](https://github.com/hw-irc-sni/registry-center),
+[`prompt-registry`](https://github.com/hw-irc-sni/prompt-registry)), sharing
+the `openan-net` Docker network so agent cards resolve by container name.
+
+**One-time setup** (once for all three components, not per-repo):
+```bash
+docker network create openan-net
+```
+
+**Production** — `docker-compose.yml` only:
+```bash
+docker compose up -d --build
+```
+Talks to registry-center over HTTPS at `https://openan-registry-center:5000`
+(registry-center is HTTPS-by-default in production — see its README). Start
+registry-center's stack first, or this container will log connection errors
+until that hostname resolves and answers.
+
+**Development** — layers `docker-compose-dev.yml` on top, which switches
+`AGENT_REGISTRY_URL` to plain HTTP to match registry-center's dev stack
+(HTTPS disabled there — see that repo's `docker-compose-dev.yml`):
+```bash
+docker compose -f docker-compose.yml -f docker-compose-dev.yml up -d --build
+```
+
+Every value in `environment:` reads from the host shell (or a `.env` file
+next to the compose file) first, falling back to the default shown in the
+file — e.g. `AGENT_REGISTRY_URL=https://a-different-host:5000 docker compose up -d`
+overrides it without editing the file.
+
+> Keep the two components on the same "track" — both production files
+> together, or both dev files together. Mixing a production
+> `registry-center` (HTTPS) with a dev `orchestration-center` pointed at
+> `http://` (or vice versa) will fail the TLS handshake.
+
+`prompt-registry` has no wiring to the other two today — join it to
+`openan-net` for future integration, but it can be started independently in
+any order.
+
 ## Architecture
 
 ```mermaid
