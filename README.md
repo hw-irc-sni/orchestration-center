@@ -211,10 +211,30 @@ until that hostname resolves and answers.
 
 **Development** — layers `docker-compose-dev.yml` on top, which switches
 `AGENT_REGISTRY_URL` to plain HTTP to match registry-center's dev stack
-(HTTPS disabled there — see that repo's `docker-compose-dev.yml`):
+(HTTPS disabled there — see that repo's `docker-compose-dev.yml`), and also
+brings up a `sample-agents` service (the 11 stub demo agents from
+`samples/agentcard/*.json`) so workflow execution has something to call:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose-dev.yml up -d --build
 ```
+`sample-agents` runs the same image with `python3 -m samples.start_agents_server`
+and `SAMPLE_AGENTS_HOST=sample-agents`, which makes it advertise and register
+its cards under that Compose service name instead of the `127.0.0.1` baked
+into the JSON files (only correct when both processes share a host, which
+containers don't). It's dev-only and intentionally absent from
+`docker-compose.yml` — these are stub agents, not production backends.
+
+> Don't run this `sample-agents` container and a host-run
+> `python -m samples.start_agents_server` (`bin/start_samples.sh`) against the
+> same registry at the same time — each registers its own card URLs
+> (`sample-agents:PORT` vs `127.0.0.1:PORT`) and whichever started last wins,
+> silently breaking calls from the other.
+
+Negotiation-capable sample agents need real chat-model credentials to do
+anything past startup — `common/config/llm_config.json` ships with a
+placeholder API key. Pass `LLM_CHAT_MODEL`/`LLM_CHAT_API_KEY`/`LLM_CHAT_URL`
+(host shell or a `.env` next to the compose file) to `sample-agents` for
+negotiation to actually work, not just for the container to start green.
 
 Every value in `environment:` reads from the host shell (or a `.env` file
 next to the compose file) first, falling back to the default shown in the
