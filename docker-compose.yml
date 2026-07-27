@@ -3,7 +3,7 @@ services:
     build: .
     container_name: openan-orchestration-center
     ports:
-      - "5001:5001"
+      - "127.0.0.1:5001:5001"
     volumes:
       - ./data:/opt/orchestration-center/data
       - ./etc/ssl:/opt/orchestration-center/etc/ssl
@@ -28,6 +28,20 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    restart: unless-stopped
+
+  workflow-designer:
+    build: ./workflow-designer
+    container_name: openan-orchestration-center-frontend
+    ports:
+      - "3003:80"
+    environment:
+      - BACKEND_HOST=orchestration-center
+      - BACKEND_PORT=${ORCH_PORT:-5001}
+    depends_on:
+      - orchestration-center
+    networks:
+      - openan-net
     restart: unless-stopped
 
   # ---- Optional: PostgreSQL for production persistence ----
