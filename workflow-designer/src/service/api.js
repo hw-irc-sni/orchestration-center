@@ -42,6 +42,16 @@ const isStandardPort = () => {
     return !p || p === '80' || p === '443';
 };
 
+const isLocalHost = () => ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+// A remote client can never reach a backend at 127.0.0.1 (the browser's own
+// loopback), so direct-IP mode is only a safe unconfigured default when the
+// page itself was loaded from localhost (the local `npm run dev` workflow).
+// Anywhere else (including this project's own docker-compose deployment,
+// which serves the nginx-fronted UI on the non-standard port 3003) must
+// default to the nginx gateway path instead.
+export const shouldDefaultToGateway = () => isStandardPort() || !isLocalHost();
+
 export const getBaseUrl = () => {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
@@ -54,7 +64,7 @@ export const getBaseUrl = () => {
            }
             return trimTrailingSlash(config.nginxUrl || config.gatewayUrl || defaultGateway);
         }
-       if (isStandardPort()) {
+       if (shouldDefaultToGateway()) {
            return trimTrailingSlash(defaultGateway);
        }
         return `${defaultProtocol}${defaultIp}:${defaultPort}`;
