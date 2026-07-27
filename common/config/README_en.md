@@ -19,14 +19,41 @@ Each capability key (`chat`, `embed`, `rerank`) configures one model instance. U
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `description` | string | No | Model description for logging. |
-| `model` | string | No | Model name, injected via `$MODEL` placeholder. |
+| `provider` | string | No | Provider name (default `openai`). Only selects which a2a-t-sdk client class handles the negotiation path — any OpenAI-compatible service works under any name. |
+| `model` | string | **Yes** | Model name, injected via `$MODEL` placeholder. |
 | `url` | string | **Yes** | API endpoint URL. |
-| `api_key` | string | No | API key; auto-added as `Authorization: Bearer` when `auth` is null. |
+| `base_url` | string | No | API root for the a2a-t-sdk client. Derived from `url` by stripping `/chat/completions` when empty — set it explicitly for gateways and other endpoint layouts. |
+| `api_key` | string | **Yes** | API key; auto-added as `Authorization: Bearer` when `auth` is null. |
 | `enable_thinking` | boolean | No | Chain-of-thought mode, injected via `$ENABLE_THINKING`. |
+| `verify_ssl` | boolean | No | TLS certificate verification (default `true`). Set `false` for self-signed endpoints. |
 | `auth` | object/string/null | No | Authentication strategy (see below). |
 | `headers` | object | No | Extra static HTTP headers. |
 | `body` | object | **Yes** | Request body template with `$` placeholders. |
 | `response` | object | **Yes** | Response extraction paths (dot notation). |
+
+`model`, `url` and `api_key` ship as `<YOUR_...>` placeholders. Leaving one unset raises a
+`ValueError` naming the field and the variable that sets it, rather than failing at the provider.
+
+## Environment Overrides
+
+Any **scalar** field above can be overridden without editing this file, using
+`LLM_<CAPABILITY>_<FIELD>` — for example `LLM_CHAT_MODEL`, `LLM_CHAT_API_KEY`,
+`LLM_CHAT_BASE_URL`, `LLM_EMBED_URL`. Precedence:
+
+```
+environment variables  >  <repo root>/.env  >  common/config/llm_config.json
+```
+
+- Empty values count as unset, so Docker Compose's `${LLM_CHAT_MODEL:-}` cannot blank out a default.
+- Booleans accept `true/false`, `1/0`, `yes/no`, `on/off`.
+- Structured fields (`auth`, `headers`, `body`, `response`) are request templates and cannot be
+  set this way — they stay in the JSON.
+- In containers only the `LLM_CHAT_*` variables are forwarded (see `docker-compose.yml`); the repo
+  root `.env` is not mounted, so other capabilities remain JSON-configured there.
+
+Both LLM stacks resolve through the same point, so an override applies to `GenericLLM` *and* to the
+generated a2a-t-sdk config at `etc/conf/a2at.env`. Caches live for the process lifetime — restart
+after a change.
 
 ## Authentication (`auth`)
 
@@ -61,11 +88,15 @@ Optional with defaults: `scenario_code` ("B99999999999"), `scenario_version` ("V
 
 ### OpenAI-compatible API
 
+Works for OpenAI, DeepSeek, Qwen/DashScope, or any self-hosted gateway — only `provider`,
+`model` and `url` change.
+
 ```json
 {
   "chat": {
-    "model": "deepseek-chat",
-    "url": "https://api.deepseek.com/v1/chat/completions",
+    "provider": "openai",
+    "model": "gpt-4o",
+    "url": "https://api.openai.com/v1/chat/completions",
     "api_key": "sk-xxxxxxxx",
     "enable_thinking": true,
     "auth": null,

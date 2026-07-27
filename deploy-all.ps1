@@ -19,9 +19,10 @@
 #   GCP_REGION        - Deployment region (default: asia-east1)
 #   DB_PASSWORD       - PostgreSQL password
 #   AGENT_REGISTRY_URL - Registry Center URL (auto-detected if in same project)
-#   LLM_CHAT_API_KEY  - LLM API key (DeepSeek, OpenAI, etc.)
+#   LLM_CHAT_PROVIDER - LLM provider name (default: openai)
+#   LLM_CHAT_API_KEY  - LLM API key (any OpenAI-compatible provider)
 #   LLM_CHAT_MODEL    - LLM model name
-#   LLM_CHAT_URL      - LLM API URL
+#   LLM_CHAT_URL      - LLM chat-completions URL
 # =============================================================================
 
 param(
@@ -38,9 +39,8 @@ $PSNativeCommandUseErrorActionPreference = $false
 $cleanupVars = @('GCP_PROJECT_ID', 'GCP_REGION', 'DB_PASSWORD', 'PERSISTENCE_MODE', 'DB_HOST', 'DB_PORT',
                  'DB_NAME', 'DB_USERNAME', 'DB_POOL_MIN', 'DB_POOL_MAX',
                  'ORCH_IP', 'ORCH_ENABLE_HTTPS', 'ORCH_FORWARDED_ALLOW_IPS',
-                 'AGENT_REGISTRY_URL', 'LLM_CHAT_MODEL', 'LLM_CHAT_API_KEY',
-                 'LLM_CHAT_URL', 'A2AT_LLM_PROVIDER', 'A2AT_LLM_MODEL',
-                 'A2AT_LLM_API_KEY', 'A2AT_LLM_BASE_URL')
+                 'AGENT_REGISTRY_URL', 'LLM_CHAT_PROVIDER', 'LLM_CHAT_MODEL',
+                 'LLM_CHAT_API_KEY', 'LLM_CHAT_URL', 'LLM_CHAT_BASE_URL')
 foreach ($v in $cleanupVars) {
     Remove-Item "env:$v" -ErrorAction SilentlyContinue
 }
@@ -209,33 +209,39 @@ Write-Host "  The orchestration center requires an LLM for PSOP generation and e
 Write-Host "  You can configure it now, or skip and configure later via GCP Console."
 Write-Host ""
 
+$LLM_CHAT_PROVIDER = ""
 $LLM_CHAT_MODEL = ""
 $LLM_CHAT_API_KEY = ""
 $LLM_CHAT_URL = ""
 
 if (-not $env:LLM_CHAT_API_KEY) {
-    Write-Host "  Supported providers: DeepSeek, OpenAI, or any OpenAI-compatible API."
+    Write-Host "  Any OpenAI-compatible API works (OpenAI, DeepSeek, Qwen, a self-hosted gateway...)."
     $LLM_CHAT_API_KEY = Read-Host "  Enter LLM API Key (or press Enter to skip and configure later)"
 } else {
     $LLM_CHAT_API_KEY = $env:LLM_CHAT_API_KEY
 }
 
 if ($LLM_CHAT_API_KEY) {
+    if (-not $env:LLM_CHAT_PROVIDER) {
+        $LLM_CHAT_PROVIDER = Read-Host "  Enter LLM provider name (default: openai)"
+        if (-not $LLM_CHAT_PROVIDER) { $LLM_CHAT_PROVIDER = "openai" }
+    } else {
+        $LLM_CHAT_PROVIDER = $env:LLM_CHAT_PROVIDER
+    }
+
     if (-not $env:LLM_CHAT_MODEL) {
-        $LLM_CHAT_MODEL = Read-Host "  Enter LLM Model name (default: deepseek-chat)"
-        if (-not $LLM_CHAT_MODEL) { $LLM_CHAT_MODEL = "deepseek-chat" }
+        $LLM_CHAT_MODEL = Read-Host "  Enter LLM Model name (e.g. gpt-4o, deepseek-chat, qwen-plus)"
     } else {
         $LLM_CHAT_MODEL = $env:LLM_CHAT_MODEL
     }
 
     if (-not $env:LLM_CHAT_URL) {
-        $LLM_CHAT_URL = Read-Host "  Enter LLM API URL (default: https://api.deepseek.com/v1/chat/completions)"
-        if (-not $LLM_CHAT_URL) { $LLM_CHAT_URL = "https://api.deepseek.com/v1/chat/completions" }
+        $LLM_CHAT_URL = Read-Host "  Enter LLM chat-completions URL (e.g. https://api.openai.com/v1/chat/completions)"
     } else {
         $LLM_CHAT_URL = $env:LLM_CHAT_URL
     }
 
-    Write-Host "  LLM configured: model=${LLM_CHAT_MODEL}, url=${LLM_CHAT_URL}"
+    Write-Host "  LLM configured: provider=${LLM_CHAT_PROVIDER}, model=${LLM_CHAT_MODEL}, url=${LLM_CHAT_URL}"
 } else {
     Write-Host "  LLM not configured now. You MUST configure it later for the service to work."
     Write-Host "  See deployment guide: '部署后补配大模型 (LLM)' section."
@@ -353,6 +359,11 @@ if ($REGISTRY_URL) {
     $envVars += ",AGENT_REGISTRY_URL=$REGISTRY_URL"
 }
 
+# The backend reads these directly and derives the a2a-t-sdk's own configuration
+# (etc/conf/a2at.env) from them at startup, so no A2AT_* variables are needed here.
+if ($LLM_CHAT_PROVIDER) {
+    $envVars += ",LLM_CHAT_PROVIDER=$LLM_CHAT_PROVIDER"
+}
 if ($LLM_CHAT_MODEL) {
     $envVars += ",LLM_CHAT_MODEL=$LLM_CHAT_MODEL"
 }
@@ -361,21 +372,6 @@ if ($LLM_CHAT_API_KEY) {
 }
 if ($LLM_CHAT_URL) {
     $envVars += ",LLM_CHAT_URL=$LLM_CHAT_URL"
-}
-
-# A2A-T SDK LLM config (derived from chat model config for consistency)
-if ($LLM_CHAT_API_KEY) {
-    $a2atProvider = "deepseek"
-    if ($LLM_CHAT_URL -match "openai") { $a2atProvider = "openai" }
-    # Derive base URL from chat URL (strip /chat/completions suffix)
-    $a2atBaseUrl = $LLM_CHAT_URL
-    if ($a2atBaseUrl -match "/chat/completions$") {
-        $a2atBaseUrl = $a2atBaseUrl -replace "/chat/completions$", ""
-    }
-    $envVars += ",A2AT_LLM_PROVIDER=$a2atProvider"
-    $envVars += ",A2AT_LLM_MODEL=$LLM_CHAT_MODEL"
-    $envVars += ",A2AT_LLM_API_KEY=$LLM_CHAT_API_KEY"
-    $envVars += ",A2AT_LLM_BASE_URL=$a2atBaseUrl"
 }
 
 Write-Host "  DB_HOST: /cloudsql/$CLOUDSQL_CONN"

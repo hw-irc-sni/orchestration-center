@@ -175,17 +175,24 @@ gcloud run services update orchestration-center --region=asia-east1 --project="Y
 编排中心的 PSOP 生成、意图编排等功能依赖大模型，不配置无法使用：
 
 ```powershell
-gcloud run services update orchestration-center --region=asia-east1 --project="YOUR_PROJECT_ID" --update-env-vars="LLM_CHAT_MODEL=deepseek-chat,LLM_CHAT_API_KEY=sk-xxxxx,LLM_CHAT_URL=https://api.deepseek.com/v1/chat/completions,A2AT_LLM_PROVIDER=deepseek,A2AT_LLM_MODEL=deepseek-chat,A2AT_LLM_API_KEY=sk-xxxxx,A2AT_LLM_BASE_URL=https://api.deepseek.com"
+gcloud run services update orchestration-center --region=asia-east1 --project="YOUR_PROJECT_ID" --update-env-vars="LLM_CHAT_PROVIDER=openai,LLM_CHAT_MODEL=gpt-4o,LLM_CHAT_API_KEY=sk-xxxxx,LLM_CHAT_URL=https://api.openai.com/v1/chat/completions"
 ```
 
 把 `sk-xxxxx` 替换为你的实际 API Key。
 
+无需配置 `A2AT_LLM_*`：服务会在启动时根据上述变量自动生成 a2a-t-sdk 的配置
+（`etc/conf/a2at.env`），协商链路随之生效。
+
 ### LLM 配置示例
 
-| 提供商 | LLM_CHAT_MODEL | LLM_CHAT_URL | A2AT_LLM_BASE_URL |
-|--------|----------------|--------------|-------------------|
-| DeepSeek | `deepseek-chat` | `https://api.deepseek.com/v1/chat/completions` | `https://api.deepseek.com` |
-| OpenAI | `gpt-4o` | `https://api.openai.com/v1/chat/completions` | `https://api.openai.com` |
+任何兼容 OpenAI 接口的厂商均可使用。`LLM_CHAT_BASE_URL` 为可选项 —— 默认由 `LLM_CHAT_URL`
+去掉 `/chat/completions` 推导；仅当网关的接口路径结构不同时才需要显式配置。
+
+| 提供商 | LLM_CHAT_PROVIDER | LLM_CHAT_MODEL | LLM_CHAT_URL |
+|--------|-------------------|----------------|--------------|
+| OpenAI | `openai` | `gpt-4o` | `https://api.openai.com/v1/chat/completions` |
+| DeepSeek | `deepseek` | `deepseek-chat` | `https://api.deepseek.com/v1/chat/completions` |
+| Qwen / DashScope | `qwen` | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` |
 
 ---
 

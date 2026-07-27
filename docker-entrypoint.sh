@@ -15,8 +15,6 @@ export PATH="/opt/venv/bin:$PATH"
 
 SERVER_CONF="etc/conf/server.conf"
 DB_CONF="etc/conf/db_config.json"
-LLM_CONF="common/config/llm_config.json"
-A2AT_ENV=".env"
 
 # --- server.conf overrides (using # as sed delimiter to handle paths safely) ---
 if [ -n "${ORCH_IP}" ]; then
@@ -77,44 +75,12 @@ with open(path, 'w') as f:
     echo "Config override: db_config.json updated from environment variables"
 fi
 
-# --- llm_config.json overrides ---
-# Chat model (required for PSOP generation and execution)
-if [ -n "${LLM_CHAT_MODEL}" ] || [ -n "${LLM_CHAT_API_KEY}" ] || [ -n "${LLM_CHAT_URL}" ]; then
-    python3 -c "
-import json, os
-path = '${LLM_CONF}'
-with open(path, 'r') as f:
-    cfg = json.load(f)
-chat = cfg.get('chat', {})
-if os.environ.get('LLM_CHAT_MODEL'):    chat['model']    = os.environ['LLM_CHAT_MODEL']
-if os.environ.get('LLM_CHAT_API_KEY'):  chat['api_key']  = os.environ['LLM_CHAT_API_KEY']
-if os.environ.get('LLM_CHAT_URL'):      chat['url']      = os.environ['LLM_CHAT_URL']
-cfg['chat'] = chat
-with open(path, 'w') as f:
-    json.dump(cfg, f, indent=2)
-"
-    echo "Config override: llm_config.json[chat] updated from environment variables"
-fi
-
-# --- .env overrides (A2A-T SDK) ---
-if [ -f "${A2AT_ENV}" ]; then
-if [ -n "${A2AT_LLM_PROVIDER}" ]; then
-    sed -i "s#^A2AT_LLM_PROVIDER=.*#A2AT_LLM_PROVIDER=${A2AT_LLM_PROVIDER}#" "${A2AT_ENV}"
-    echo "Config override: A2AT_LLM_PROVIDER=${A2AT_LLM_PROVIDER}"
-fi
-if [ -n "${A2AT_LLM_MODEL}" ]; then
-    sed -i "s#^A2AT_LLM_MODEL=.*#A2AT_LLM_MODEL=${A2AT_LLM_MODEL}#" "${A2AT_ENV}"
-    echo "Config override: A2AT_LLM_MODEL=${A2AT_LLM_MODEL}"
-fi
-if [ -n "${A2AT_LLM_API_KEY}" ]; then
-    sed -i "s#^A2AT_LLM_API_KEY=.*#A2AT_LLM_API_KEY=${A2AT_LLM_API_KEY}#" "${A2AT_ENV}"
-    echo "Config override: A2AT_LLM_API_KEY=***"
-fi
-if [ -n "${A2AT_LLM_BASE_URL}" ]; then
-    sed -i "s#^A2AT_LLM_BASE_URL=.*#A2AT_LLM_BASE_URL=${A2AT_LLM_BASE_URL}#" "${A2AT_ENV}"
-    echo "Config override: A2AT_LLM_BASE_URL=${A2AT_LLM_BASE_URL}"
-fi
-fi
+# --- LLM configuration ---
+# No bridge needed: LLM_<CAPABILITY>_<FIELD> variables (LLM_CHAT_PROVIDER, LLM_CHAT_MODEL,
+# LLM_CHAT_API_KEY, LLM_CHAT_URL, LLM_CHAT_BASE_URL, ...) are read straight from the
+# environment by common/llm/config/env_overrides.py, and the a2a-t-sdk env file at
+# etc/conf/a2at.env is regenerated from the resolved config on every startup. Nothing
+# is written into llm_config.json, so no secret lands in a file inside the image.
 
 # Ensure required directories exist
 mkdir -p log run data

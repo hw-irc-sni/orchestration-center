@@ -366,22 +366,52 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 | `etc/conf/server.conf` | 服务 IP、端口、TLS 证书、持久化模式、注册中心 URL, access password |
 | `etc/conf/server.properties` | TLS 版本、密码套件、流控参数、连接限制, client_verify_server |
 | `etc/conf/db_config.json` | PostgreSQL 连接配置 |
-| `common/config/llm_config.json` | LLM/Embedding/Rerank 模型端点 |
+| `common/config/llm_config.json` | LLM/Embedding/Rerank 模型端点（可通过 `LLM_*` 覆盖，见下文） |
+| `.env` | 本地覆盖配置 — 已加入 gitignore，程序不会覆写 |
+| `etc/conf/a2at.env` | **自动生成**的 a2a-t-sdk 配置，每次启动重写 — 请勿手工编辑 |
 | `common/config/README_zh.md` | LLM 配置指南 |
+
+## LLM 配置
+
+未硬编码任何厂商。`common/config/llm_config.json` 默认只提供占位值，任何兼容 OpenAI 接口的
+服务均可使用。所有标量字段都可以通过 `LLM_<能力>_<字段>` 覆盖，无需修改 JSON —— 在环境变量
+或仓库根目录的 `.env` 中设置即可：
+
+| 变量 | 说明 |
+|------|------|
+| `LLM_CHAT_PROVIDER` | 厂商名称（默认 `openai`），决定 a2a-t-sdk 使用的客户端类 |
+| `LLM_CHAT_MODEL` | 模型名称 —— **必填** |
+| `LLM_CHAT_API_KEY` | API Key —— **必填** |
+| `LLM_CHAT_URL` | 完整的 chat-completions 接口地址 —— **必填** |
+| `LLM_CHAT_BASE_URL` | API 根地址。可选，默认由 `LLM_CHAT_URL` 去掉 `/chat/completions` 推导 |
+| `LLM_CHAT_VERIFY_SSL` | 设为 `false` 可跳过 TLS 校验（自签名网关场景） |
+| `LLM_CHAT_ENABLE_THINKING` | 思维链开关 |
+
+「能力」为 `chat`、`embed`、`rerank`；「字段」为该能力下的任意标量配置项。优先级为
+**环境变量 > `.env` > `llm_config.json`**。结构化字段（`auth`、`headers`、`body`、`response`）
+属于请求模板，仍保留在 JSON 中。Docker 场景下仅透传 `LLM_CHAT_*`（见 `docker-compose.yml`），
+其他能力在容器内仍通过 JSON 配置。
+
+```bash
+LLM_CHAT_PROVIDER=openai
+LLM_CHAT_MODEL=gpt-4o
+LLM_CHAT_API_KEY=<your-api-key>
+LLM_CHAT_URL=https://api.openai.com/v1/chat/completions
+```
+
+DeepSeek、Qwen 及自建网关的示例参见 [`.env.example`](.env.example)。
 
 ## A2A-T SDK 集成
 
-本项目集成了 a2a-t-sdk 的 fulfillment 协商能力：
+本项目集成了 a2a-t-sdk 的 fulfillment 协商能力。其配置（`A2AT_LLM_PROVIDER`、`A2AT_LLM_MODEL`、
+`A2AT_LLM_API_KEY`、`A2AT_LLM_BASE_URL`、`A2AT_NEGOTIATION_STATE_STORE_TYPE` 等）位于
+`etc/conf/a2at.env`，由 `common/a2at_config.py` 在**每次启动时**根据上述已解析的 chat 配置
+重新生成。请勿编辑该文件，也不要在 `.env` 中写 `A2AT_*` 变量（会被忽略）。修改 `LLM_CHAT_*`
+（或 `llm_config.json`）即可同时作用于编排后端与协商链路。
 
-```env
-A2AT_LLM_PROVIDER=deepseek
-A2AT_LLM_MODEL=deepseek-chat
-A2AT_LLM_API_KEY=<your-api-key>
-A2AT_LLM_BASE_URL=https://api.deepseek.com
-A2AT_NEGOTIATION_STATE_STORE_TYPE=in_memory
-```
-
-配置由 `common/a2at_config.py` 从 `common/config/llm_config.json` 自动生成。
+> **从旧版本升级：** 该生成文件原先是仓库根目录的 `.env`。若你曾手工修改其中的 `A2AT_*`
+> 配置，请改用 `LLM_CHAT_*`。另请注意：`llm_config.json` 中的 `verify_ssl` 此前并未生效
+> （所有调用都会校验 TLS），现已生效 —— 原有的 `verify_ssl: false` 将真正关闭校验。
 
 ## 文档导航
 

@@ -17,5 +17,6 @@ etc/conf/task_prompt_stubs.json
 etc/ssl/
 etc/conf/agent_credentials.json
 etc/conf/server.conf
+etc/conf/a2at.env
 *.token.md
 *token*.md

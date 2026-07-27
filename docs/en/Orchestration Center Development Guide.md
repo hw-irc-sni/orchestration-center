@@ -393,12 +393,17 @@ Path syntax: `.` separates field names, numbers are array indices. For example:
 
 ##### Example A: OpenAI-Compatible API
 
+Any OpenAI-compatible provider works — only `provider`, `model` and `url` change. Every scalar
+field below can also be set via `LLM_CHAT_<FIELD>` in the environment or a repo-root `.env`,
+which takes precedence over this file (see `common/config/README_en.md`).
+
 ```json
 {
   "chat": {
-    "description": "DeepSeek Chat",
-    "model": "deepseek-chat",
-    "url": "https://api.deepseek.com/v1/chat/completions",
+    "description": "Chat model",
+    "provider": "openai",
+    "model": "gpt-4o",
+    "url": "https://api.openai.com/v1/chat/completions",
     "api_key": "sk-xxxxxxxx",
     "enable_thinking": true,
     "auth": null,

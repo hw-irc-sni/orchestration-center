@@ -16,7 +16,11 @@
 #    under the License.
 
 import dataclasses
-from common.llm.config.llm_config import get_model_config
+from common.llm.config.llm_config import (
+    describe_missing_fields,
+    get_model_config,
+    missing_required_fields,
+)
 from common.llm.provider.generic_llm import GenericLLM
 
 _instances = {}
@@ -30,6 +34,9 @@ def _get_instance(capability: str) -> GenericLLM:
                 f"No model configured for capability '{capability}' "
                 f"in llm_config.json"
             )
+        missing = missing_required_fields(config)
+        if missing:
+            raise ValueError(describe_missing_fields(capability, missing))
         _instances[capability] = GenericLLM(dataclasses.asdict(config))
     return _instances[capability]
 
@@ -44,6 +51,21 @@ def get_embed_instance():
 
 def get_rerank_instance():
     return _get_instance("rerank")
+
+
+def reset_instances() -> None:
+    """Drop cached clients and the cached config.
+
+    Test-only helper, deliberately not re-exported from `common.llm` — both caches
+    live for the process lifetime, so in production a configuration change takes
+    effect on restart and nothing should be resetting them at runtime.
+    """
+    from common.llm.config.env_overrides import reset_dotenv_cache
+    from common.llm.config.llm_config import _ModelConfigHolder
+
+    _instances.clear()
+    _ModelConfigHolder.reset()
+    reset_dotenv_cache()
 
 if __name__ == "__main__":
     # Test Chat model
