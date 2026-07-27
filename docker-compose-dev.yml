@@ -30,12 +30,14 @@ services:
       - AGENT_REGISTRY_URL=${AGENT_REGISTRY_URL:-http://openan-registry-center:5000}
       - PERSISTENCE_MODE=file
       # Negotiation-capable sample agents need a real chat model to do
-      # anything past startup; common/config/llm_config.json ships with a
-      # placeholder API key. Set these in the host shell or a .env next to
-      # this file to point at a real provider.
+      # anything past startup; common/config/llm_config.json ships with
+      # placeholders. Set these in the host shell or a .env next to this
+      # file to point at any OpenAI-compatible provider.
+      - LLM_CHAT_PROVIDER=${LLM_CHAT_PROVIDER:-}
       - LLM_CHAT_MODEL=${LLM_CHAT_MODEL:-}
       - LLM_CHAT_API_KEY=${LLM_CHAT_API_KEY:-}
       - LLM_CHAT_URL=${LLM_CHAT_URL:-}
+      - LLM_CHAT_BASE_URL=${LLM_CHAT_BASE_URL:-}
     ports:
       - "8899-8907:8899-8907"
       - "26335-26336:26335-26336"

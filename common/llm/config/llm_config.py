@@ -23,10 +23,17 @@ from loguru import logger
 @dataclass
 class ModelConfig:
     description: str = ""
+    # Provider name handed to the a2a-t-sdk LLM client factory. Any OpenAI-compatible
+    # endpoint works; the name only selects which client class the SDK instantiates.
+    provider: str = "openai"
     model: str = ""
     url: str = ""
+    # API root for SDK-style clients (which append their own path). Derived from `url`
+    # when left empty — see common/a2at_config.py.
+    base_url: str = ""
     api_key: str = ""
     enable_thinking: bool = False
+    verify_ssl: bool = True
     auth: Any = None
     headers: Dict[str, str] = field(default_factory=dict)
     body: Dict[str, Any] = field(default_factory=dict)
@@ -36,10 +43,13 @@ class ModelConfig:
     def from_dict(key: str, raw: dict) -> "ModelConfig":
         return ModelConfig(
             description=raw.get("description", key),
+            provider=raw.get("provider", "openai"),
             model=raw.get("model", ""),
             url=raw.get("url", ""),
+            base_url=raw.get("base_url", ""),
             api_key=raw.get("api_key", ""),
             enable_thinking=raw.get("enable_thinking", False),
+            verify_ssl=raw.get("verify_ssl", True),
             auth=raw.get("auth"),
             headers=raw.get("headers", {}),
             body=raw.get("body", {}),
@@ -64,10 +74,40 @@ class _ModelConfigHolder:
         except Exception as e:
             logger.error(f"Failed to load LLM config: {e}")
             raw_config = {}
+        # Environment overrides are applied here, not at the call sites, so that both
+        # consumers of get_model_config() — GenericLLM and the a2a-t-sdk .env generator
+        # — always see the same resolved values.
+        from common.llm.config.env_overrides import apply_env_overrides
         return {
-            key: ModelConfig.from_dict(key, val)
+            key: ModelConfig.from_dict(key, apply_env_overrides(key, val))
             for key, val in raw_config.items()
         }
 
+    @classmethod
+    def reset(cls) -> None:
+        """Drop the cached configuration. Intended for tests."""
+        cls._instance = None
+
 def get_model_config(capability: str) -> Optional[ModelConfig]:
     return _ModelConfigHolder.get().get(capability)
+
+# Fields that must be filled in before any call can succeed. llm_config.json ships with
+# <YOUR_...> placeholders so it stays provider-neutral; leaving one in place must fail
+# with a clear message rather than reaching the provider.
+REQUIRED_FIELDS = ("url", "model", "api_key")
+
+def is_placeholder(value: str) -> bool:
+    value = (value or "").strip()
+    return not value or (value.startswith("<") and value.endswith(">"))
+
+def missing_required_fields(config: ModelConfig) -> list:
+    return [f for f in REQUIRED_FIELDS if is_placeholder(getattr(config, f, ""))]
+
+def describe_missing_fields(capability: str, missing: list) -> str:
+    from common.llm.config.env_overrides import env_var_name
+
+    env_vars = ", ".join(env_var_name(capability, f) for f in missing)
+    return (
+        f"LLM capability '{capability}' is not configured: {', '.join(missing)}. "
+        f"Set {env_vars} (environment or .env), or edit common/config/llm_config.json."
+    )

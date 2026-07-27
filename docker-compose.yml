@@ -20,6 +20,14 @@ services:
       # openan-registry-center container reachable on openan-net — start
       # that stack first.
       - AGENT_REGISTRY_URL=${AGENT_REGISTRY_URL:-https://openan-registry-center:5000}
+      # LLM provider — required for PSOP generation, routing and negotiation to work.
+      # common/config/llm_config.json ships with placeholders; set these (host shell or
+      # the .env next to this file) to point at any OpenAI-compatible provider.
+      - LLM_CHAT_PROVIDER=${LLM_CHAT_PROVIDER:-}
+      - LLM_CHAT_MODEL=${LLM_CHAT_MODEL:-}
+      - LLM_CHAT_API_KEY=${LLM_CHAT_API_KEY:-}
+      - LLM_CHAT_URL=${LLM_CHAT_URL:-}
+      - LLM_CHAT_BASE_URL=${LLM_CHAT_BASE_URL:-}
     networks:
       - openan-net
     healthcheck:

@@ -172,6 +172,15 @@ def main():
     Main entry point for starting the PSOP server.
     """
     server_config = get_conf()
+
+    # Regenerate the a2a-t-sdk env file from the resolved LLM config, so a provider,
+    # model or key set via LLM_CHAT_* also reaches the negotiation path.
+    try:
+        from common.a2at_config import ensure_env_file_exists
+        ensure_env_file_exists()
+    except Exception as e:
+        logger.error(f"ensure_env_file_exists failed (negotiation support may be unavailable): {e}")
+
     is_https = server_config.get("enable_https", True)
     is_enable_https = str(is_https).lower() == 'true'
     if server_config.get('persistence_mode', 'file').lower() != 'file':

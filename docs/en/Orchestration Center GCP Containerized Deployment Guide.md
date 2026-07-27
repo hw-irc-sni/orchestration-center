@@ -175,17 +175,25 @@ Or just re-run `.\deploy-all.ps1` — existing resources are skipped automatical
 PSOP generation and intent orchestration require an LLM — won't work without it:
 
 ```powershell
-gcloud run services update orchestration-center --region=asia-east1 --project="YOUR_PROJECT_ID" --update-env-vars="LLM_CHAT_MODEL=deepseek-chat,LLM_CHAT_API_KEY=sk-xxxxx,LLM_CHAT_URL=https://api.deepseek.com/v1/chat/completions,A2AT_LLM_PROVIDER=deepseek,A2AT_LLM_MODEL=deepseek-chat,A2AT_LLM_API_KEY=sk-xxxxx,A2AT_LLM_BASE_URL=https://api.deepseek.com"
+gcloud run services update orchestration-center --region=asia-east1 --project="YOUR_PROJECT_ID" --update-env-vars="LLM_CHAT_PROVIDER=openai,LLM_CHAT_MODEL=gpt-4o,LLM_CHAT_API_KEY=sk-xxxxx,LLM_CHAT_URL=https://api.openai.com/v1/chat/completions"
 ```
 
 Replace `sk-xxxxx` with your actual API key.
 
+No `A2AT_LLM_*` variables are needed: the service derives the a2a-t-sdk's own configuration
+(`etc/conf/a2at.env`) from these at startup, so the negotiation path follows automatically.
+
 ### LLM configuration examples
 
-| Provider | LLM_CHAT_MODEL | LLM_CHAT_URL | A2AT_LLM_BASE_URL |
-|----------|----------------|--------------|-------------------|
-| DeepSeek | `deepseek-chat` | `https://api.deepseek.com/v1/chat/completions` | `https://api.deepseek.com` |
-| OpenAI | `gpt-4o` | `https://api.openai.com/v1/chat/completions` | `https://api.openai.com` |
+Any OpenAI-compatible provider works. `LLM_CHAT_BASE_URL` is optional — it is derived from
+`LLM_CHAT_URL` by stripping `/chat/completions`; set it explicitly only for gateways whose
+endpoint path has a different shape.
+
+| Provider | LLM_CHAT_PROVIDER | LLM_CHAT_MODEL | LLM_CHAT_URL |
+|----------|-------------------|----------------|--------------|
+| OpenAI | `openai` | `gpt-4o` | `https://api.openai.com/v1/chat/completions` |
+| DeepSeek | `deepseek` | `deepseek-chat` | `https://api.deepseek.com/v1/chat/completions` |
+| Qwen / DashScope | `qwen` | `qwen-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` |
 
 ---
 

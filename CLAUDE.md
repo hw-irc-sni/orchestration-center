@@ -75,7 +75,11 @@ Workflow creation has 3 modes, all converging on a PSOP: PDF import (parse → P
 
 ### A2A-T SDK / negotiation
 
-`.env` for a2a-t-sdk is auto-generated from `common/config/llm_config.json` via `common/a2at_config.py` — edit the JSON, not the generated `.env`.
+`etc/conf/a2at.env` is **generated** by `common/a2at_config.py` from the resolved `chat` capability, and rewritten on every startup (`ensure_env_file_exists()`, called from `orchestrate/start.py` and `samples/start_agents_server.py`) — never edit it, and never put `A2AT_*` variables in `.env`, they're ignored.
+
+No LLM provider is hardcoded. `common/config/llm_config.json` holds the defaults (`provider`, `model`, `url`, `base_url`, `api_key`, `verify_ssl`, …) and any scalar field of any capability is overridable via `LLM_<CAPABILITY>_<FIELD>` (`LLM_CHAT_MODEL`, `LLM_EMBED_URL`, …). Precedence: environment > repo-root `.env` > JSON. This is resolved in one place — `_ModelConfigHolder._load()` (`common/llm/config/llm_config.py`) via `common/llm/config/env_overrides.py` — so both `GenericLLM` and the generated a2a-t-sdk config see identical values; don't re-resolve at a call site. `provider` only names which a2a-t-sdk client class handles negotiation; registration is guarded in `_ensure_provider_registered()` because the SDK's factory raises on a duplicate name.
+
+Both the config cache and the client cache live for the process lifetime — call `common.llm.reset_instances()` in tests after changing env vars.
 
 ### Agent authentication
 
