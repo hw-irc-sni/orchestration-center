@@ -20,13 +20,12 @@ LLM Module
 
 This module provides a client wrapper for interacting with LLM API.
 """
-from .llm import get_llm_instance, get_embed_instance, get_rerank_instance, reset_instances
+from .llm import get_llm_instance, get_embed_instance, get_rerank_instance
 from .provider.generic_llm import GenericLLM
 
 __all__ = [
     "get_llm_instance",
     "get_embed_instance",
     "get_rerank_instance",
-    "reset_instances",
     "GenericLLM",
 ]

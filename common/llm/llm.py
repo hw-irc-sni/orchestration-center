@@ -54,10 +54,11 @@ def get_rerank_instance():
 
 
 def reset_instances() -> None:
-    """Drop cached clients and the cached config. Intended for tests.
+    """Drop cached clients and the cached config.
 
-    Both caches live for the process lifetime, so a configuration change only takes
-    effect on restart — or after calling this.
+    Test-only helper, deliberately not re-exported from `common.llm` — both caches
+    live for the process lifetime, so in production a configuration change takes
+    effect on restart and nothing should be resetting them at runtime.
     """
     from common.llm.config.env_overrides import reset_dotenv_cache
     from common.llm.config.llm_config import _ModelConfigHolder

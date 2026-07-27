@@ -25,7 +25,17 @@ a2at_config = pytest.importorskip(
     "common.a2at_config", reason="a2a-t-sdk is not installed"
 )
 
+from a2a_t.llm.factory import LLMClientFactory  # noqa: E402
+
 from common.llm.config.llm_config import ModelConfig  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _restore_provider_registry():
+    """The SDK's factory registry is process-global; keep test registrations local."""
+    original = dict(LLMClientFactory._clients)
+    yield
+    LLMClientFactory._clients = original
 
 
 def make_config(**overrides) -> ModelConfig:
@@ -74,6 +84,31 @@ class TestProvider:
         assert values["A2AT_LLM_PROVIDER"] == "openai"
 
 
+class TestDeriveBaseUrl:
+    @pytest.mark.parametrize("url,expected", [
+        ("https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1"),
+        ("https://api.deepseek.com/v1/chat/completions", "https://api.deepseek.com/v1"),
+        ("https://gw.internal/llm/api/v2/chat/completions", "https://gw.internal/llm/api/v2"),
+        # A root path still derives a well-formed base URL, just an unhelpful one
+        ("https://api.x.com/chat/completions", "https://api.x.com/"),
+        ("https://api.x.com/", "https://api.x.com/"),
+    ])
+    def test_openai_shaped_paths(self, url, expected):
+        assert a2at_config._derive_base_url(url) == expected
+
+    @pytest.mark.parametrize("url", [
+        "https://api.x.com",       # no path: Path("").parent.parent == "." -> corrupt host
+        "not-a-url",
+        "",
+    ])
+    def test_underivable_urls_return_empty_rather_than_a_corrupt_host(self, url):
+        assert a2at_config._derive_base_url(url) == ""
+
+    def test_underivable_url_is_rejected_with_actionable_message(self, tmp_path):
+        with pytest.raises(ValueError, match="LLM_CHAT_BASE_URL"):
+            generate(tmp_path, make_config(url="https://api.x.com", base_url=""))
+
+
 class TestBaseUrl:
     def test_explicit_base_url_wins(self, tmp_path):
         values = generate(
@@ -93,25 +128,96 @@ class TestBaseUrl:
 class TestProviderRegistration:
     def test_openai_is_not_registered_twice(self):
         """The SDK pre-registers 'openai' and raises on a duplicate registration."""
-        from a2a_t.llm.factory import LLMClientFactory
-
         a2at_config._ensure_provider_registered("openai")
         a2at_config._ensure_provider_registered("openai")
         assert "openai" in LLMClientFactory.available_providers()
 
     def test_unknown_provider_is_registered_once(self):
-        from a2a_t.llm.factory import LLMClientFactory
-
         name = "test-provider-registration"
         a2at_config._ensure_provider_registered(name)
         a2at_config._ensure_provider_registered(name)
         assert LLMClientFactory.available_providers().count(name) == 1
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("OpenAI", "openai"),
+        ("  DeepSeek  ", "deepseek"),
+        ("Qwen Plus", "qwenplus"),
+        ("", ""),
+        (None, ""),
+    ])
+    def test_normalize_provider(self, raw, expected):
+        assert a2at_config.normalize_provider(raw) == expected
+
+    def test_mixed_case_provider_is_registered_and_usable(self):
+        """Regression: 'OpenAI' used to register nothing and fail mid-negotiation."""
+        a2at_config._ensure_provider_registered("MyProvider")
+        assert "myprovider" in LLMClientFactory.available_providers()
+
+    def test_generated_provider_is_normalized(self, tmp_path):
+        values = generate(tmp_path, make_config(provider="DeepSeek"))
+        assert values["A2AT_LLM_PROVIDER"] == "deepseek"
+
+    def test_normalized_provider_is_accepted_by_the_sdk_factory(self, tmp_path):
+        """End-to-end: what we write must survive LLMConfigLoader + factory.create."""
+        from a2a_t.llm.config_loader import LLMConfigLoader
+
+        out = tmp_path / "a2at.env"
+        with patch("common.llm.config.llm_config.get_model_config",
+                   return_value=make_config(provider="OpenAI")):
+            a2at_config.generate_env_from_llm_config(out)
+        config = LLMConfigLoader.load(out)
+        assert LLMClientFactory.create(config.provider, config) is not None
 
     def test_get_a2at_env_path_registers_the_provider(self, tmp_path):
         """Every A2ATClient/A2ATServer site calls this right before constructing."""
         with patch.object(a2at_config, "_ensure_provider_registered") as mock_register:
             a2at_config.get_a2at_env_path(tmp_path / "a2at.env")
         mock_register.assert_called_once()
+
+
+class TestStaleDotenvWarning:
+    def _warn_with(self, tmp_path, content):
+        dotenv = tmp_path / ".env"
+        dotenv.write_text(content, encoding="utf-8")
+        from common.llm.config import env_overrides
+
+        with patch.object(env_overrides, "get_dotenv_path", lambda: dotenv), \
+             patch.object(a2at_config, "logger") as mock_logger:
+            a2at_config._warn_on_stale_dotenv()
+        return mock_logger
+
+    def test_warns_when_a2at_keys_are_present(self, tmp_path):
+        logger = self._warn_with(tmp_path, "LLM_CHAT_MODEL=x\nA2AT_LLM_MODEL=stale\n")
+        assert logger.warning.called
+        assert "no longer read" in str(logger.warning.call_args)
+
+    def test_silent_for_a_clean_dotenv(self, tmp_path):
+        logger = self._warn_with(tmp_path, "LLM_CHAT_MODEL=x\n")
+        assert not logger.warning.called
+
+    def test_silent_when_dotenv_is_absent(self, tmp_path):
+        from common.llm.config import env_overrides
+
+        with patch.object(env_overrides, "get_dotenv_path", lambda: tmp_path / "absent"), \
+             patch.object(a2at_config, "logger") as mock_logger:
+            a2at_config._warn_on_stale_dotenv()
+        assert not mock_logger.warning.called
+
+
+class TestConfiguredProvider:
+    def test_falls_back_to_openai_when_unset(self):
+        with patch("common.llm.config.llm_config.get_model_config",
+                   return_value=make_config(provider="")):
+            assert a2at_config._configured_provider() == "openai"
+
+    def test_falls_back_to_openai_when_capability_is_missing(self):
+        with patch("common.llm.config.llm_config.get_model_config", return_value=None):
+            assert a2at_config._configured_provider() == "openai"
+
+    def test_normalizes_the_configured_value(self):
+        with patch("common.llm.config.llm_config.get_model_config",
+                   return_value=make_config(provider="DeepSeek")):
+            assert a2at_config._configured_provider() == "deepseek"
 
 
 class TestEnvFileLocation:

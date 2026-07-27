@@ -36,11 +36,21 @@ def _default_env_path() -> Path:
     base = Path(os.path.abspath(__file__)).parent.parent
     return base / "etc" / "conf" / A2AT_ENV_FILENAME
 
+def normalize_provider(provider: str) -> str:
+    """Coerce a provider name into the form the SDK's factory accepts.
+
+    It requires lowercase and no whitespace, so a natural `LLM_CHAT_PROVIDER=OpenAI`
+    would otherwise register nothing and surface only as an error mid-negotiation.
+    Returns "" when nothing usable remains, so callers can reject it early.
+    """
+    return "".join((provider or "").split()).lower()
+
 def _configured_provider() -> str:
     from common.llm.config.llm_config import get_model_config
 
     model_cfg = get_model_config("chat")
-    return (model_cfg.provider if model_cfg else "") or "openai"
+    raw = (model_cfg.provider if model_cfg else "") or "openai"
+    return normalize_provider(raw) or "openai"
 
 def _ensure_provider_registered(provider: str = None) -> None:
     """Register the configured provider with the SDK's client factory.
@@ -50,8 +60,8 @@ def _ensure_provider_registered(provider: str = None) -> None:
     selects the client class, and base_url does the real work.
     """
     try:
-        provider = provider or _configured_provider()
-        if provider not in _LLMFactory.available_providers():
+        provider = normalize_provider(provider) if provider else _configured_provider()
+        if provider and provider not in _LLMFactory.available_providers():
             _LLMFactory.register(provider, _OpenAIClient)
     except Exception as e:
         logger.warning(f"Could not register LLM provider with the a2a-t-sdk factory: {e}")
@@ -103,10 +113,16 @@ def _derive_base_url(full_url: str) -> str:
     """Strip the '/chat/completions' suffix off a full endpoint URL.
 
     Only correct for OpenAI-shaped paths; set 'base_url' explicitly in llm_config.json
-    (or LLM_CHAT_BASE_URL) for gateways and other endpoint layouts.
+    (or LLM_CHAT_BASE_URL) for gateways and other endpoint layouts. Returns "" when the
+    URL carries no path to strip, since Path("").parent.parent yields "." and would
+    otherwise produce a corrupt host such as 'https://api.example.com.'.
     """
     parsed = urlparse(full_url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
     base_path = Path(parsed.path).parent.parent.as_posix()
+    if base_path in (".", ""):
+        return ""
     return f"{parsed.scheme}://{parsed.netloc}{base_path}"
 
 def _warn_on_stale_dotenv() -> None:
@@ -153,10 +169,20 @@ def generate_env_from_llm_config(
 
     model = model_cfg.model
     api_key = model_cfg.api_key
-    base_url = model_cfg.base_url or _derive_base_url(model_cfg.url)
-
-    a2at_provider = model_cfg.provider or "openai"
     capability_upper = capability.upper()
+
+    # Both of the remaining values are only validated by the SDK when it builds a
+    # client, i.e. in the middle of a negotiation. Reject them here instead, where
+    # the caller already logs and degrades to "no negotiation support".
+    a2at_provider = normalize_provider(model_cfg.provider) or "openai"
+    base_url = model_cfg.base_url or _derive_base_url(model_cfg.url)
+    if not base_url:
+        raise ValueError(
+            f"Cannot derive a base URL from '{model_cfg.url}' for capability "
+            f"'{capability}'. Set LLM_{capability_upper}_BASE_URL (environment or .env), "
+            f"or add 'base_url' to common/config/llm_config.json."
+        )
+
     _ensure_provider_registered(a2at_provider)
     _warn_on_stale_dotenv()
 
