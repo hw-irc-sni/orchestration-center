@@ -209,6 +209,15 @@ Talks to registry-center over HTTPS at `https://openan-registry-center:5000`
 registry-center's stack first, or this container will log connection errors
 until that hostname resolves and answers.
 
+This also brings up `workflow-designer`, the containerized frontend: a
+multi-stage build (`npm run build`, served by nginx) exposed at
+`http://localhost:3003`. nginx reverse-proxies `/api/orchestrate/` to the
+`orchestration-center` service on the compose network (matching the
+`defaultGateway` the frontend's `src/service/api.js` falls back to when
+served from a non-dev port), so the browser never needs a direct route to
+port 5001. Override the upstream with `BACKEND_HOST`/`BACKEND_PORT` env vars
+if you rename or repoint the backend service.
+
 **Development** — layers `docker-compose-dev.yml` on top, which switches
 `AGENT_REGISTRY_URL` to plain HTTP to match registry-center's dev stack
 (HTTPS disabled there — see that repo's `docker-compose-dev.yml`), and also
