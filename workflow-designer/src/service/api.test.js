@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import {
   getBaseUrl,
+  shouldDefaultToGateway,
   defaultIp,
   defaultPort,
   defaultGateway,
@@ -128,6 +129,56 @@ describe('api service', () => {
       mockLocalStorage.setItem('server_config', 'invalid json');
       const url = getBaseUrl();
       expect(url).toBe(`http://${defaultIp}:${defaultPort}`);
+    });
+
+    describe('with no saved config, on a non-standard port', () => {
+      const originalLocation = window.location;
+
+      const setHostname = (hostname) => {
+        Object.defineProperty(window, 'location', {
+          value: { ...originalLocation, hostname, port: '3003', protocol: 'http:' },
+          configurable: true,
+        });
+      };
+
+      afterEach(() => {
+        Object.defineProperty(window, 'location', { value: originalLocation, configurable: true });
+      });
+
+      it('falls back to the nginx gateway for a remote hostname (regression: was defaulting to 127.0.0.1, unreachable from a real client)', () => {
+        setHostname('10.220.239.88');
+        expect(shouldDefaultToGateway()).toBe(true);
+        expect(getBaseUrl()).toBe(defaultGateway);
+      });
+
+      it('still uses direct-IP mode when loaded from localhost (local `npm run dev` workflow)', () => {
+        setHostname('localhost');
+        expect(shouldDefaultToGateway()).toBe(false);
+        expect(getBaseUrl()).toBe(`http://${defaultIp}:${defaultPort}`);
+      });
+
+      it('still uses direct-IP mode when loaded from 127.0.0.1', () => {
+        setHostname('127.0.0.1');
+        expect(shouldDefaultToGateway()).toBe(false);
+        expect(getBaseUrl()).toBe(`http://${defaultIp}:${defaultPort}`);
+      });
+    });
+
+    describe('with no saved config, on a standard port', () => {
+      const originalLocation = window.location;
+
+      afterEach(() => {
+        Object.defineProperty(window, 'location', { value: originalLocation, configurable: true });
+      });
+
+      it('uses the nginx gateway for a non-localhost hostname served on port 443, regardless of host', () => {
+        Object.defineProperty(window, 'location', {
+          value: { ...originalLocation, hostname: 'orchestration.example.com', port: '443', protocol: 'https:' },
+          configurable: true,
+        });
+        expect(shouldDefaultToGateway()).toBe(true);
+        expect(getBaseUrl()).toBe(defaultGateway);
+      });
     });
   });
 
