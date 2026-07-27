@@ -163,6 +163,23 @@ describe('api service', () => {
         expect(getBaseUrl()).toBe(`http://${defaultIp}:${defaultPort}`);
       });
     });
+
+    describe('with no saved config, on a standard port', () => {
+      const originalLocation = window.location;
+
+      afterEach(() => {
+        Object.defineProperty(window, 'location', { value: originalLocation, configurable: true });
+      });
+
+      it('uses the nginx gateway for a non-localhost hostname served on port 443, regardless of host', () => {
+        Object.defineProperty(window, 'location', {
+          value: { ...originalLocation, hostname: 'orchestration.example.com', port: '443', protocol: 'https:' },
+          configurable: true,
+        });
+        expect(shouldDefaultToGateway()).toBe(true);
+        expect(getBaseUrl()).toBe(defaultGateway);
+      });
+    });
   });
 
   describe('API requests using the api instance', () => {
