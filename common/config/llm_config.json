@@ -1,10 +1,8 @@
 {
   "chat": {
     "description": "Chat/LLM model for PSOP generation and execution",
-    "provider": "openai",
     "model": "<YOUR_MODEL>",
     "url": "<YOUR_CHAT_COMPLETIONS_URL>",
-    "base_url": "",
     "api_key": "<YOUR_API_KEY>",
     "enable_thinking": true,
     "verify_ssl": true,

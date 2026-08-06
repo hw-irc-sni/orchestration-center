@@ -90,7 +90,7 @@ The `WorkflowStorage` singleton is accessed via `get_workflow_storage()` (uses `
 
 The workflow-engine SDK reads its `A2AT_*` variables (`A2AT_LLM_PROVIDER`, `A2AT_LLM_MODEL`, `A2AT_LLM_API_KEY`, `A2AT_LLM_BASE_URL`, `A2AT_NEGOTIATION_STATE_STORE_TYPE`, …) directly from the repo-root `.env` — set them there. There is no generator: `common/a2at_config.py` and `etc/conf/a2at.env` are gone, and `A2AT_*` is independent of `LLM_CHAT_*` below (no auto-derivation between the two).
 
-No LLM provider is hardcoded for the orchestration backend's own LLM calls (intent parsing, retrieval). Any scalar field of any capability in `common/config/llm_config.json` can be overridden with `LLM_<CAPABILITY>_<FIELD>` (e.g. `LLM_CHAT_PROVIDER`, `LLM_CHAT_MODEL`, `LLM_CHAT_API_KEY`, `LLM_CHAT_URL`, `LLM_CHAT_BASE_URL`, `LLM_EMBED_URL`), resolved once in `_ModelConfigHolder._load()` via `common/llm/config/env_overrides.py`. Precedence: environment > repo-root `.env` > JSON. Structured fields (`auth`, `headers`, `body`, `response`) are request templates and stay JSON-only.
+No LLM provider is hardcoded for the orchestration backend's own LLM calls (intent parsing, retrieval). Any scalar field of any capability in `common/config/llm_config.json` can be overridden with `LLM_<CAPABILITY>_<FIELD>` (e.g. `LLM_CHAT_MODEL`, `LLM_CHAT_API_KEY`, `LLM_CHAT_URL`, `LLM_EMBED_URL`), resolved once in `_ModelConfigHolder._load()` via `common/llm/config/env_overrides.py`. Precedence: environment > repo-root `.env` > JSON. Structured fields (`auth`, `headers`, `body`, `response`) are request templates and stay JSON-only.
 
 ### Agent authentication
 

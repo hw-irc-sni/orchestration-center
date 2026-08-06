@@ -37,10 +37,8 @@ from loguru import logger
 # purpose — they cannot be expressed sensibly as a single environment value.
 OVERRIDABLE_FIELDS = (
     "description",
-    "provider",
     "model",
     "url",
-    "base_url",
     "api_key",
     "enable_thinking",
     "verify_ssl",

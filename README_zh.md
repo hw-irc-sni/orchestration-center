@@ -373,27 +373,27 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 
 ## LLM 配置
 
-未硬编码任何厂商。`common/config/llm_config.json` 默认只提供占位值，任何兼容 OpenAI 接口的
-服务均可使用。所有标量字段都可以通过 `LLM_<能力>_<字段>` 覆盖，无需修改 JSON —— 在环境变量
-或仓库根目录的 `.env` 中设置即可：
+无硬编码厂商。`common/config/llm_config.json` 提供占位符，任何兼容 OpenAI 的服务均可使用。
+每个标量字段都可以不修改 JSON 直接覆盖，使用 `LLM_<能力>_<字段>` —— 在环境变量或仓库根目录的
+`.env` 中设置：
 
-| 变量 | 说明 |
+| 变量 | 用途 |
 |------|------|
-| `LLM_CHAT_PROVIDER` | 厂商名称（默认 `openai`），决定 a2a-t-sdk 使用的客户端类 |
-| `LLM_CHAT_MODEL` | 模型名称 —— **必填** |
-| `LLM_CHAT_API_KEY` | API Key —— **必填** |
-| `LLM_CHAT_URL` | 完整的 chat-completions 接口地址 —— **必填** |
-| `LLM_CHAT_BASE_URL` | API 根地址。可选，默认由 `LLM_CHAT_URL` 去掉 `/chat/completions` 推导 |
-| `LLM_CHAT_VERIFY_SSL` | 设为 `false` 可跳过 TLS 校验（自签名网关场景） |
-| `LLM_CHAT_ENABLE_THINKING` | 思维链开关 |
+| `LLM_CHAT_MODEL` | 模型名称 — **必填** |
+| `LLM_CHAT_API_KEY` | API 密钥 — **必填** |
+| `LLM_CHAT_URL` | 完整的 chat-completions 端点 — **必填** |
+| `LLM_CHAT_VERIFY_SSL` | 设为 `false` 跳过 TLS 校验（自签名网关） |
+| `LLM_CHAT_ENABLE_THINKING` | 思考模式开关 |
 
-「能力」为 `chat`、`embed`、`rerank`；「字段」为该能力下的任意标量配置项。优先级为
+`能力` 为 `chat`、`embed` 或 `rerank`；`字段` 为该能力下任意标量字段。优先级为
 **环境变量 > `.env` > `llm_config.json`**。结构化字段（`auth`、`headers`、`body`、`response`）
-属于请求模板，仍保留在 JSON 中。Docker 场景下仅透传 `LLM_CHAT_*`（见 `docker-compose.yml`），
-其他能力在容器内仍通过 JSON 配置。
+是请求模板，仍保留在 JSON 中。容器内仅透传 `LLM_CHAT_*`（见 `docker-compose.yml`），其他能力
+仍通过 JSON 配置。
+
+该配置驱动编排后端自身的 LLM 调用（意图解析、PSOP 检索、PDF/BPMN 摘要），与下文 A2A-T 协商 SDK 的
+配置相互独立。
 
 ```bash
-LLM_CHAT_PROVIDER=openai
 LLM_CHAT_MODEL=gpt-4o
 LLM_CHAT_API_KEY=<your-api-key>
 LLM_CHAT_URL=https://api.openai.com/v1/chat/completions

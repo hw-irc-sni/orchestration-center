@@ -30,10 +30,8 @@ from common.llm.config.env_overrides import (
 
 CHAT_RAW = {
     "description": "Chat model",
-    "provider": "openai",
     "model": "json-model",
     "url": "https://json.example/v1/chat/completions",
-    "base_url": "",
     "api_key": "<YOUR_API_KEY>",
     "enable_thinking": True,
     "verify_ssl": True,
@@ -137,12 +135,10 @@ class TestScope:
         assert CHAT_RAW["model"] == "json-model"
 
     def test_all_documented_fields_are_overridable(self, monkeypatch):
-        monkeypatch.setenv("LLM_CHAT_PROVIDER", "qwen")
-        monkeypatch.setenv("LLM_CHAT_BASE_URL", "https://gateway.example/api")
+        monkeypatch.setenv("LLM_CHAT_MODEL", "qwen-max")
         monkeypatch.setenv("LLM_CHAT_ENABLE_THINKING", "false")
         merged = apply_env_overrides("chat", CHAT_RAW)
-        assert merged["provider"] == "qwen"
-        assert merged["base_url"] == "https://gateway.example/api"
+        assert merged["model"] == "qwen-max"
         assert merged["enable_thinking"] is False
 
 
@@ -164,13 +160,11 @@ class TestModelConfigIntegration:
         from common.llm.config.llm_config import get_model_config
         from common.llm.llm import reset_instances
 
-        monkeypatch.setenv("LLM_CHAT_PROVIDER", "deepseek")
         monkeypatch.setenv("LLM_CHAT_MODEL", "deepseek-chat")
         monkeypatch.setenv("LLM_CHAT_VERIFY_SSL", "false")
         reset_instances()
 
         config = get_model_config("chat")
-        assert config.provider == "deepseek"
         assert config.model == "deepseek-chat"
         assert config.verify_ssl is False
         reset_instances()

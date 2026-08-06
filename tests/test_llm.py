@@ -90,21 +90,15 @@ class TestModelConfig:
         cfg = ModelConfig.from_dict("x", {"url": "", "auth": None})
         assert cfg.auth is None
 
-    def test_provider_base_url_and_verify_ssl_are_read(self):
+    def test_verify_ssl_is_read(self):
         cfg = ModelConfig.from_dict("chat", {
             "url": "https://gateway.internal/llm/api/chat/completions",
-            "provider": "qwen",
-            "base_url": "https://gateway.internal/llm/api",
             "verify_ssl": False,
         })
-        assert cfg.provider == "qwen"
-        assert cfg.base_url == "https://gateway.internal/llm/api"
         assert cfg.verify_ssl is False
 
-    def test_provider_defaults_to_openai_and_ssl_verification_stays_on(self):
+    def test_verify_ssl_defaults_to_true(self):
         cfg = ModelConfig.from_dict("x", {"url": "http://x"})
-        assert cfg.provider == "openai"
-        assert cfg.base_url == ""
         assert cfg.verify_ssl is True
 
 # ── configuration guard ──

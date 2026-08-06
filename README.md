@@ -241,7 +241,7 @@ containers don't). It's dev-only and intentionally absent from
 
 Negotiation-capable sample agents need real chat-model credentials to do
 anything past startup — `common/config/llm_config.json` ships with
-placeholders. Pass `LLM_CHAT_PROVIDER`/`LLM_CHAT_MODEL`/`LLM_CHAT_API_KEY`/`LLM_CHAT_URL`
+placeholders. Pass `LLM_CHAT_MODEL`/`LLM_CHAT_API_KEY`/`LLM_CHAT_URL`
 (host shell or a `.env` next to the compose file) to `sample-agents` for
 negotiation to actually work, not just for the container to start green.
 
@@ -455,11 +455,9 @@ using `LLM_<CAPABILITY>_<FIELD>` — set it in your environment or in a `.env` a
 
 | Variable | Purpose |
 |----------|---------|
-| `LLM_CHAT_PROVIDER` | Provider name (default `openai`). Selects the a2a-t-sdk client class |
 | `LLM_CHAT_MODEL` | Model name — **required** |
 | `LLM_CHAT_API_KEY` | API key — **required** |
 | `LLM_CHAT_URL` | Full chat-completions endpoint — **required** |
-| `LLM_CHAT_BASE_URL` | API root. Optional; derived from `LLM_CHAT_URL` by stripping `/chat/completions` |
 | `LLM_CHAT_VERIFY_SSL` | `false` to skip TLS verification (self-signed gateways) |
 | `LLM_CHAT_ENABLE_THINKING` | Chain-of-thought flag |
 
@@ -472,7 +470,6 @@ This configures the orchestration backend's own LLM calls (intent parsing, PSOP 
 summarization). It is independent of the A2A-T negotiation SDK's configuration below.
 
 ```bash
-LLM_CHAT_PROVIDER=openai
 LLM_CHAT_MODEL=gpt-4o
 LLM_CHAT_API_KEY=<your-api-key>
 LLM_CHAT_URL=https://api.openai.com/v1/chat/completions

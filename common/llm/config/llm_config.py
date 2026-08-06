@@ -23,13 +23,8 @@ from loguru import logger
 @dataclass
 class ModelConfig:
     description: str = ""
-    # Provider name handed to the a2a-t-sdk LLM client factory. Any OpenAI-compatible
-    # endpoint works; the name only selects which client class the SDK instantiates.
-    provider: str = "openai"
     model: str = ""
     url: str = ""
-    # API root for SDK-style clients (which append their own path).
-    base_url: str = ""
     api_key: str = ""
     enable_thinking: bool = False
     verify_ssl: bool = True
@@ -42,10 +37,8 @@ class ModelConfig:
     def from_dict(key: str, raw: dict) -> "ModelConfig":
         return ModelConfig(
             description=raw.get("description", key),
-            provider=raw.get("provider", "openai"),
             model=raw.get("model", ""),
             url=raw.get("url", ""),
-            base_url=raw.get("base_url", ""),
             api_key=raw.get("api_key", ""),
             enable_thinking=raw.get("enable_thinking", False),
             verify_ssl=raw.get("verify_ssl", True),
@@ -73,9 +66,8 @@ class _ModelConfigHolder:
         except Exception as e:
             logger.error(f"Failed to load LLM config: {e}")
             raw_config = {}
-        # Environment overrides are applied here, not at the call sites, so that both
-        # consumers of get_model_config() — GenericLLM and the a2a-t-sdk .env generator
-        # — always see the same resolved values.
+        # Environment overrides are applied here, not at the call sites, so every
+        # caller of get_model_config() sees the same resolved values.
         from common.llm.config.env_overrides import apply_env_overrides
         return {
             key: ModelConfig.from_dict(key, apply_env_overrides(key, val))

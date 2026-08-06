@@ -23,15 +23,17 @@ services:
       # LLM provider — required for PSOP generation, routing and negotiation to work.
       # common/config/llm_config.json ships with placeholders; set these (host shell or
       # the .env next to this file) to point at any OpenAI-compatible provider.
-      - LLM_CHAT_PROVIDER=${LLM_CHAT_PROVIDER:-}
       - LLM_CHAT_MODEL=${LLM_CHAT_MODEL:-}
       - LLM_CHAT_API_KEY=${LLM_CHAT_API_KEY:-}
       - LLM_CHAT_URL=${LLM_CHAT_URL:-}
-      - LLM_CHAT_BASE_URL=${LLM_CHAT_BASE_URL:-}
     networks:
       - openan-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/rest/v1/orchestrate/agent-cards"]
+      # -k: ORCH_ENABLE_HTTPS defaults to a self-signed cert, which curl won't
+      # trust without it. Scheme follows ORCH_ENABLE_HTTPS -- the backend only
+      # listens on one protocol per port, so a plain http:// check against an
+      # HTTPS-only server would report unhealthy forever.
+      test: ["CMD-SHELL", "curl -kf http$$([ \"$$ORCH_ENABLE_HTTPS\" = true ] && echo s)://localhost:5001/rest/v1/orchestrate/agent-cards"]
       interval: 30s
       timeout: 10s
       retries: 3

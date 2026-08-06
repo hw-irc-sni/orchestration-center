@@ -19,10 +19,8 @@ Each capability key (`chat`, `embed`, `rerank`) configures one model instance. U
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `description` | string | No | Model description for logging. |
-| `provider` | string | No | Provider name (default `openai`). Only selects which a2a-t-sdk client class handles the negotiation path — any OpenAI-compatible service works under any name. |
 | `model` | string | **Yes** | Model name, injected via `$MODEL` placeholder. |
 | `url` | string | **Yes** | API endpoint URL. |
-| `base_url` | string | No | API root for the a2a-t-sdk client. Derived from `url` by stripping `/chat/completions` when empty — set it explicitly for gateways and other endpoint layouts. |
 | `api_key` | string | **Yes** | API key; auto-added as `Authorization: Bearer` when `auth` is null. |
 | `enable_thinking` | boolean | No | Chain-of-thought mode, injected via `$ENABLE_THINKING`. |
 | `verify_ssl` | boolean | No | TLS certificate verification (default `true`). Set `false` for self-signed endpoints. |
@@ -38,7 +36,7 @@ Each capability key (`chat`, `embed`, `rerank`) configures one model instance. U
 
 Any **scalar** field above can be overridden without editing this file, using
 `LLM_<CAPABILITY>_<FIELD>` — for example `LLM_CHAT_MODEL`, `LLM_CHAT_API_KEY`,
-`LLM_CHAT_BASE_URL`, `LLM_EMBED_URL`. Precedence:
+`LLM_EMBED_URL`. Precedence:
 
 ```
 environment variables  >  <repo root>/.env  >  common/config/llm_config.json
@@ -51,9 +49,10 @@ environment variables  >  <repo root>/.env  >  common/config/llm_config.json
 - In containers only the `LLM_CHAT_*` variables are forwarded (see `docker-compose.yml`); the repo
   root `.env` is not mounted, so other capabilities remain JSON-configured there.
 
-Both LLM stacks resolve through the same point, so an override applies to `GenericLLM` *and* to the
-generated a2a-t-sdk config at `etc/conf/a2at.env`. Caches live for the process lifetime — restart
-after a change.
+This config drives `GenericLLM` — the orchestration backend's own LLM calls (intent parsing, PSOP
+retrieval, PDF/BPMN summarization). It is independent of the A2A-T negotiation SDK's `A2AT_*`
+config in the repo-root `.env` (see the top-level README). The cache lives for the process
+lifetime — restart after a change.
 
 ## Authentication (`auth`)
 
@@ -88,13 +87,12 @@ Optional with defaults: `scenario_code` ("B99999999999"), `scenario_version` ("V
 
 ### OpenAI-compatible API
 
-Works for OpenAI, DeepSeek, Qwen/DashScope, or any self-hosted gateway — only `provider`,
-`model` and `url` change.
+Works for OpenAI, DeepSeek, Qwen/DashScope, or any self-hosted gateway — only `model` and `url`
+change.
 
 ```json
 {
   "chat": {
-    "provider": "openai",
     "model": "gpt-4o",
     "url": "https://api.openai.com/v1/chat/completions",
     "api_key": "sk-xxxxxxxx",
