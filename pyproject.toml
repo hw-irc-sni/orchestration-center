@@ -7,11 +7,12 @@
  version = "1.0.0"
  description = "AI Agent Orchestration Center"
  requires-python = ">=3.11"
- dependencies = [
-     "pydantic>=2.12.5",
-     "a2a-t-sdk>=0.1.8",
-     "a2a-sdk[http-server]",
-     "a2a-sdk[grpc]",
+dependencies = [
+    "pydantic>=2.12.5",
+    "a2a-t-sdk>=1.0.0",
+    "workflow-exec-engine>=0.0.2",
+    "a2a-sdk[http-server]",
+    "a2a-sdk[grpc]",
      "openai>=2.26.0",
      "python-dotenv>=1.1.0",
      "fastapi>=0.135.1",

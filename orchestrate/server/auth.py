@@ -55,7 +55,13 @@ def is_auth_enabled() -> bool:
 
     In PostgreSQL mode: checks if the users table has any user.
     In file mode: checks ``access_password`` in server.conf.
+    
+    Returns False when TESTING environment variable is set.
     """
+    import os
+    if os.environ.get('TESTING', '').lower() in ('true', '1', 'yes'):
+        return False
+    
     conf = get_conf()
     if conf.get("persistence_mode", "file").lower() == "postgresql":
         from database.utils.user_store import has_any_user

@@ -58,6 +58,9 @@
     "interface_label": "Interface",
     "ai_gen": "AI Gen",
     "native": "Native",
+    "select_agent": "Select Host Agent",
+    "dispatch": "Dispatch",
+    "dispatching": "Dispatching...",
     "generating_wf": "Generating workflow...",
     "standby": "Standby",
     "interaction": "Interaction",
@@ -242,7 +245,8 @@
       "contextFromHintLayer0": "Execution layer nodes use their task description only; upstream context is not applicable.",
       "contextFromAll": "All predecessors",
       "contextFromAuto": "Auto-derive (default)",
-      "contextFromNone": "No upstream steps available"
+      "contextFromNone": "No upstream steps available",
+      "stepTypeSelfLoop": "SelfLoop: Task handled locally by the workflow executor, no A2A-T dispatch to other agents. Use for merge, summarize, or other self-processing tasks."
     },
     "export": {
       "success": "Workflow saved successfully",
@@ -265,7 +269,8 @@
     "exit": {
       "title": "Confirm exit",
       "desc": "You have unsaved changes. Exiting will discard these changes. Are you sure?"
-    }
+    },
+    "selfLoop": "Self-Process"
   },
   "registry": {
     "title": "Registry center",

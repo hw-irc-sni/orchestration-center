@@ -42,11 +42,12 @@
     ],
     "capabilities": {
       "pushNotifications": false,
-      "streaming": false,
+      "streaming": true,
+      "extendedAgentCard": false,
       "extensions": [
         {
           "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Task-T/v1",
-          "description": "Extension of structured prompt TASK-T requests.",
+          "description": "Extension of structured prompt Task-T requests.",
           "required": false
         },
         {
@@ -55,8 +56,13 @@
           "required": false
         },
         {
-          "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/DATA-NEGOTIATION-T/v1",
-          "description": "Extension for A2A-T negotiation context data.",
+          "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1",
+          "description": "Extension for A2A-T authorization.",
+          "required": false
+        },
+        {
+          "uri": "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1",
+          "description": "Extension for A2A-T notification push.",
           "required": false
         }
       ]
@@ -71,7 +77,7 @@
       {
         "protocolBinding": "HTTP+JSON",
         "protocolVersion": "1.0",
-        "url": "http://127.0.0.1:8899"
+        "url": "https://127.0.0.1:8899"
       }
     ]
   }

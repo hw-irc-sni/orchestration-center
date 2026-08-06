@@ -1,4 +1,4 @@
-<!--
+﻿<!--
 Copyright (c) 2026 Huawei Technologies Co., Ltd.
 All Rights Reserved.
 
@@ -136,14 +136,14 @@ sequenceDiagram
 |------|------|
 | **可视化编排** | 基于 React Flow 的拖拽式工作流设计器，支持自动 Dagre 布局 |
 | **多模式生成** | 支持 PDF 文档导入、手动拖拽编排、自然语言生成三种工作流创建方式 |
-| **A2A-T 协商集成** | 集成 a2a-t-sdk 的 fulfillment 协商能力，协商上下文通过 Task.metadata 携带 |
-| **执行引擎** | `DynamicWorkflowEngine` — 异步 DAG 遍历、并行 A2A 调用、LLM 条件路由、SSE 流式推送 |
+| **A2A-T 协商集成** | 集成 workflow-engine 的 fulfillment 协商能力，协商上下文通过 Task.metadata 携带 |
+| **执行引擎** | `OrchestrationEngine` — 薄 A2A-T 分发通道；PSOP 工作流执行委托给工作台智能体（workflow-engine SDK） |
 | **语义检索** | 基于自然语言意图检索历史工作流，快速复用已有流程 |
 | **双 API 层** | 内部 API（`/rest/v1/orchestrate/*`）供前端调用 + 对外 API（`/api/v1/*`）供第三方集成 |
 | **SSE 流式推送** | 11 种事件类型（init、start、agent_request、agent_response、psop_update、negotiation_request、negotiation_resolved、negotiation_failed、complete、error、close）实时推送执行进度 |
 | **可插拔存储** | 文件 JSON 或 PostgreSQL 持久化，通过 HandlerRegistry 切换 |
 | **模板市场** | 预置电信场景工作流模板（直播保障、节能、故障处理） |
-| **示例 Agent** | 11 个示例 A2A Agent，集成协商能力，用于测试和演示 |
+| **示例 Agent** | 10 个示例 A2A Agent，集成协商能力，用于测试和演示 |
 
 ## 快速开始
 
@@ -198,7 +198,7 @@ flowchart TB
         direction TB
         api["双 API 层<br/>内部 /rest/v1/orchestrate/*<br/>对外 /api/v1/*"]
         domain["核心领域<br/>PSOP 生成 · 意图生成<br/>语义检索 · 发布"]
-        engine["DynamicWorkflowEngine<br/>DAG 遍历 · 并行 A2A 调用<br/>LLM 路由 · SSE 推送"]
+        engine["OrchestrationEngine<br/>薄 A2A-T 分发通道<br/>SSE 事件转发"]
     end
 
     subgraph storage["存储"]
@@ -219,9 +219,10 @@ flowchart TB
     domain --> engine
     engine --> file
     engine --> pg
-    engine -->|"A2A 协议<br/>+ A2A-T 协商"| a1
-    engine --> a2
-    engine --> a3
+    engine -->|"A2A-T 协议"| wb["工作台智能体<br/>(Leader · workflow-engine SDK)"]
+    wb -->|"A2A 协议<br/>+ A2A-T 协商"| a1
+    wb --> a2
+    wb --> a3
 
     style backend fill:#e1f5fe,stroke:#0288d1
     style frontend fill:#e8f5e9,stroke:#388e3c
@@ -367,8 +368,7 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 | `etc/conf/server.properties` | TLS 版本、密码套件、流控参数、连接限制, client_verify_server |
 | `etc/conf/db_config.json` | PostgreSQL 连接配置 |
 | `common/config/llm_config.json` | LLM/Embedding/Rerank 模型端点（可通过 `LLM_*` 覆盖，见下文） |
-| `.env` | 本地覆盖配置 — 已加入 gitignore，程序不会覆写 |
-| `etc/conf/a2at.env` | **自动生成**的 a2a-t-sdk 配置，每次启动重写 — 请勿手工编辑 |
+| `.env` | 本地覆盖配置 — 已加入 gitignore。协商 SDK 也直接从这里读取 `A2AT_*` 变量（见下文） |
 | `common/config/README_zh.md` | LLM 配置指南 |
 
 ## LLM 配置
@@ -403,15 +403,21 @@ DeepSeek、Qwen 及自建网关的示例参见 [`.env.example`](.env.example)。
 
 ## A2A-T SDK 集成
 
-本项目集成了 a2a-t-sdk 的 fulfillment 协商能力。其配置（`A2AT_LLM_PROVIDER`、`A2AT_LLM_MODEL`、
-`A2AT_LLM_API_KEY`、`A2AT_LLM_BASE_URL`、`A2AT_NEGOTIATION_STATE_STORE_TYPE` 等）位于
-`etc/conf/a2at.env`，由 `common/a2at_config.py` 在**每次启动时**根据上述已解析的 chat 配置
-重新生成。请勿编辑该文件，也不要在 `.env` 中写 `A2AT_*` 变量（会被忽略）。修改 `LLM_CHAT_*`
-（或 `llm_config.json`）即可同时作用于编排后端与协商链路。
+本项目集成了 workflow-engine SDK，用于工作台智能体的工作流执行和 fulfillment 协商。其配置
+（`A2AT_LLM_PROVIDER`、`A2AT_LLM_MODEL`、`A2AT_LLM_API_KEY`、`A2AT_LLM_BASE_URL`、
+`A2AT_NEGOTIATION_STATE_STORE_TYPE` 等）直接从仓库根目录的 `.env` 读取 — 请在其中配置：
 
-> **从旧版本升级：** 该生成文件原先是仓库根目录的 `.env`。若你曾手工修改其中的 `A2AT_*`
-> 配置，请改用 `LLM_CHAT_*`。另请注意：`llm_config.json` 中的 `verify_ssl` 此前并未生效
-> （所有调用都会校验 TLS），现已生效 —— 原有的 `verify_ssl: false` 将真正关闭校验。
+```env
+A2AT_LLM_PROVIDER=deepseek
+A2AT_LLM_MODEL=deepseek-chat
+A2AT_LLM_API_KEY=<your-api-key>
+A2AT_LLM_BASE_URL=https://api.deepseek.com
+A2AT_NEGOTIATION_STATE_STORE_TYPE=in_memory
+```
+
+> **从旧版本升级：** 早期版本会根据上面的 `LLM_CHAT_*` 配置，由 `common/a2at_config.py`
+> 自动生成 `etc/conf/a2at.env`。该生成器已移除 —— `A2AT_*` 与 `LLM_CHAT_*` 现在是两套
+> 独立的配置，`A2AT_*` 必须在 `.env` 中手工配置。
 
 ## 文档导航
 

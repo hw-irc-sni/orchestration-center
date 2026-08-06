@@ -1,4 +1,4 @@
-<!--
+﻿<!--
 Copyright (c) 2026 Huawei Technologies Co., Ltd.
 All Rights Reserved.
 
@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # OpenAN 编排中心 设计文档
 
-*版本: 1.0*
+*版本: 2.0*
 
 ## 1. 系统架构总览
 
@@ -110,7 +110,7 @@ sequenceDiagram
     end
 ```
 
-**数据流方向**: 用户意图/PreFlow → PSOP生成 → 存储 → 执行引擎 → A2A Agent并行调用 → SSE事件推送 → 执行记录存储
+**数据流方向**: 用户意图/PreFlow → PSOP生成 → 存储 → OrchestrationEngine (A2A-T 下发) → 工作台智能体执行 → A2A Agent并行调用 → SSE事件回传 → 执行记录存储
 
 ---
 
@@ -146,43 +146,63 @@ ExecutionRecord (执行记录)
 - **Layer 0**: 执行层（叶子Agent），仅依据自身任务描述执行，无上游上下文依赖
 - **Layer >= 1**: 聚合层，通过 `context_from` 指定依赖的前驱步骤，接收上游步骤的输出作为上下文中做综合分析
 - `context_from: ["*"]` 表示接收所有前驱（含间接）的输出
-- 引擎在 `_build_context_for_step` 中递归收集前驱输出，粗估截断至 ~6000 tokens
+- 工作台智能体在执行时递归收集前驱输出，粗估截断至 ~6000 tokens
 
 ---
 
 ## 3. 执行引擎设计
 
-### 3.1 `DynamicWorkflowEngine` 控制流
+### 3.1 三层架构
 
 ```text
-run()
- ├─ 找到初始步骤 (layer=0, 无前驱)
- ├─ while pending:
- │   ├─ pop 步骤索引
- │   ├─ 检查所有前驱是否完成 → 未完成则 defer（死锁保护：超 N 次跳过）
- │   ├─ _execute_subtasks(step) ──→ asyncio.gather / asyncio.as_completed 并行调用
- │   │    ├─ ANY_SUCCESS: 首个成功即返回 (asyncio.as_completed)
- │   │    └─ ALL_SUCCESS: 并行执行，任一失败则标记失败 (asyncio.gather)
- │   ├─ 存储输出到 step_outputs
- │   ├─ _determine_next_steps (async) ──→ 返回所有候选步骤
- │   │    ├─ 无条件路由: 返回所有非哨兵步骤
- │   │    └─ 条件路由: _llm_route_decision ──→ asyncio.to_thread 异步LLM调用
- │   └─ 将下一步插入 pending 队列前部 (DFS)
- └─ finally: 关闭 httpx 客户端
+Frontend (React :3003)
+    │  REST / SSE
+    ▼
+OrchestrationEngine (编排中心, 薄 A2A-T 分发通道)
+    │  A2A-T send_message_stream
+    ▼
+Workbench Agent (工作台智能体, Leader, 集成 workflow-engine SDK)
+    │  A2A Protocol + A2A-T Negotiation
+    ▼
+Worker Agents (SPN / 其他业务域 Agent)
 ```
 
-### 3.2 执行模式
+编排中心**不直接执行工作流**。`OrchestrationEngine` 是一个薄的 A2A-T 分发通道，职责为：
 
-| 模式 | 实现 | 说明 |
-|------|------|------|
-| ALL_SUCCESS | `asyncio.gather` | 所有子任务并行执行，任一失败则步骤失败 |
-| ANY_SUCCESS | `asyncio.as_completed` | 首个成功立即返回，全部失败才标记失败 |
-| 条件路由 | LLM 决策 | 分析步骤执行结果，根据 `JumpCondition` 选择下一跳 |
-| 上下文聚合 | `_build_context_for_step` | 根据 `context_from` 收集上游输出，注入给聚合层 Agent |
+1. 接收前端传入的用户意图
+2. 通过 A2A-T 协议将意图下发给工作台智能体（Workbench Agent）
+3. 流式接收工作台返回的 SDK 事件（从 TaskUpdate metadata 中提取 `__sdk_event__`）
+4. 将事件转发为前端 SSE 流
 
-### 3.3 A2A-T 协商支持
+### 3.2 工作台智能体（Workbench Agent）
 
-引擎在初始化时尝试加载 A2A-T SDK，若可用则在每次 Agent 调用前通过 `A2ATClient.generate_task_prompt()` 增强任务描述，实现 Fulfillment 协商。不可用时降级为普通 A2A 调用。
+工作台智能体是工作流执行的宿主，集成 `workflow-engine` SDK，对标 Java 端的 `TransportWorkbenchAgentExecutor` + `WorkbenchOrchestrator`。
+
+执行流程：
+
+```text
+1. 接收意图 → LLM 理解/改写（可选）
+2. PSOP 检索 → 调编排中心 API 获取匹配的工作流
+3. 加载 Agent Cards → 调注册中心获取可用 Agent 列表
+4. 扩展预置 → Authorization-T / Notification-T 预下发
+5. 创建 ControlPoint → on_task / on_self_task / on_route / on_negotiation
+6. execute_psop → workflow-engine SDK 驱动 DAG 遍历
+   ├─ ALL_SUCCESS: asyncio.gather 并行执行
+   ├─ ANY_SUCCESS: asyncio.as_completed 首个成功即返回
+   ├─ 条件路由: LLM 路由决策 (JumpCondition)
+   └─ 上下文聚合: 根据 context_from 收集上游输出
+7. 事件回流 → SDK 事件编码为 A2A-T TaskUpdate → 编排中心 → 前端 SSE
+```
+
+### 3.3 SSE 事件转发机制
+
+工作台智能体将每个 SDK 事件编码为 A2A-T `TaskStatusUpdateEvent`，原始事件 JSON 保留在 `metadata["__sdk_event__"]` 中。编排中心的 `OrchestrationEngine` 从流式响应中提取该字段，原样转发给前端。
+
+前端视角仍为 11 种事件类型（init、start、agent_request、agent_response、psop_update、negotiation_request、negotiation_resolved、negotiation_failed、complete、error、close），但事件产生方已从编排中心迁移至工作台智能体的 workflow-engine SDK。
+
+### 3.4 A2A-T 协商支持
+
+协商逻辑由工作台智能体的 `WorkbenchControlPoint` 驱动，通过 workflow-engine SDK 的 `ControlPoint` 接口实现 `on_negotiation` 回调。不可用时降级为普通 A2A 调用。
 
 ---
 
@@ -379,11 +399,11 @@ common/config/llm_config.json   (LLM 提供商配置)
 
 ## 8. 关键设计决策
 
-1. **分层上下文传播**（`layer` + `context_from`）——Layer 0 步骤独立执行，Layer >= 1 步骤通过 `context_from` 声明依赖的前驱步骤，引擎自动收集上游输出注入为上下文。`context_from: ["*"]` 表示接收所有前驱（含间接）输出。
+1. **分层上下文传播**（`layer` + `context_from`）——Layer 0 步骤独立执行，Layer >= 1 步骤通过 `context_from` 声明依赖的前驱步骤，工作台智能体自动收集上游输出注入为上下文。`context_from: ["*"]` 表示接收所有前驱（含间接）输出。
 2. **插件式存储**（`HandlerRegistry`）——通过 `InterfaceType` 枚举 + `persistence_mode` 配置分发操作到 file 或 PostgreSQL handler，新增存储后端实现 handler 接口并注册即可。
 3. **PSOP DAG 模型**——`Step` 包含 `subtasks`（并行任务列表）、`type`（`ALL_SUCCESS` / `ANY_SUCCESS` 执行模式）、`next`（条件跳转列表）。`JumpCondition` 支持声明式转发和 LLM 动态路由两种方式。
-4. **SSE 流式推送**——执行引擎通过 `push_callback` 将事件写入 `asyncio.Queue`，SSE 端点消费队列并 yield 为 `text/event-stream`。执行记录保存完整 `events` 数组，支持事后回放。
+4. **SSE 流式推送**——工作台智能体通过 workflow-engine SDK 产出事件，编码为 A2A-T TaskUpdate metadata；OrchestrationEngine 从流式响应中提取 `__sdk_event__` 并 yield 为 `text/event-stream`。执行记录保存完整 `events` 数组，支持事后回放。
 5. **Prompt 工程**——PSOP 生成、意图检索、LLM 路由决策均使用结构化 JSON schema 约束输出格式，配合 few-shot 示例减少自由格式偏差。
 6. **原子写入**——文件持久化使用 `tempfile.mkstemp` + `os.replace` 确保写入过程不产生半写文件。
-7. **全链路 async**——Subtask 通过 `asyncio.gather` / `asyncio.as_completed` 并行执行，LLM 调用通过 `run_in_executor` 包装避免阻塞事件循环。
+7. **全链路 async**——Subtask 在工作台智能体中通过 `asyncio.gather` / `asyncio.as_completed` 并行执行，LLM 调用通过 `run_in_executor` 包装避免阻塞事件循环。
 8. **多层防护**——每个 API 端点配置 `anyio.Semaphore` 并发上限 + `RateLimiter` 按 IP 速率限制。

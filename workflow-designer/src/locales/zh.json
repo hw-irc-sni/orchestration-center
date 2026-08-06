@@ -58,6 +58,9 @@
     "interface_label": "工作流预览",
     "ai_gen": "自然语言编排",
     "native": "原生编排",
+    "select_agent": "选择宿主智能体",
+    "dispatch": "派发",
+    "dispatching": "派发中...",
     "generating_wf": "正在生成工作流...",
     "standby": "待命",
     "interaction": "交互",
@@ -242,7 +245,8 @@
       "contextFromHintLayer0": "执行层节点仅依据任务描述执行，不引用上游步骤输出。",
       "contextFromAll": "所有前驱节点",
       "contextFromAuto": "自动推导（默认）",
-      "contextFromNone": "无可用上游步骤"
+      "contextFromNone": "无可用上游步骤",
+      "stepTypeSelfLoop": "自处理（SelfLoop）：该步骤由当前工作流执行者本地处理，不通过 A2A-T 协议发送给其他智能体。适用于汇总、分析等自身任务。"
     },
     "export": {
       "success": "工作流保存成功",
@@ -265,7 +269,8 @@
     "exit": {
       "title": "确认退出",
       "desc": "您有未保存的修改，退出将丢失这些修改。确定要退出吗？"
-    }
+    },
+    "selfLoop": "自处理"
   },
   "registry": {
     "title": "Agent库",

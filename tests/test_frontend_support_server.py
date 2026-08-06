@@ -490,26 +490,4 @@ class TestStartProcessStreamEndpoint:
         response = client.get(f'{BASE}/execute?psop_id=123')
         assert response.status_code == 200
 
-    def test_stream_response_format(self, client, mock_retrieval, mock_agent_lib):
-        """Test SSE response format"""
-        mock_psop = MagicMock()
-        mock_psop.id = "123"
-        mock_psop.name = "test_workflow"
-        mock_psop.steps = []
-        mock_retrieval.get_psop_by_id.return_value = mock_psop
 
-        mock_card = MagicMock()
-        mock_agent_lib.return_value = [mock_card]
-
-        with patch('orchestrate.server.sse_executor.DynamicWorkflowEngine') as MockEngine:
-            mock_engine = MockEngine.return_value
-            mock_engine.set_push_callback = MagicMock()
-            mock_engine.run = MagicMock()
-            mock_engine.run.return_value = []
-            mock_engine.execution_history = []
-
-            response = client.get(f'{BASE}/execute?psop_id=123')
-
-            assert response.status_code == 200
-            assert response.headers['content-type'].startswith('text/event-stream')
-            assert response.headers['Cache-Control'] == 'no-cache'

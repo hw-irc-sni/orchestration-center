@@ -21,6 +21,9 @@ from .energy_saving_intent_agent import EnergySavingIntentAgentExecutor
 from .live_streaming_agent import LiveStreamingAgentExecutor
 from .assurance_agent import AssuranceAgentExecutor
 from .ran_agent import RanAgentExecutor
+from .spn_domain_agent import SpnDomainAgentExecutor
+from .spn_domain_agent_city2 import SpnDomainAgentCity2Executor
+from .workbench_agent import WorkbenchAgentExecutor
 
 __all__ = [
     "NegotiationBaseAgentExecutor",
@@ -29,4 +32,7 @@ __all__ = [
     "LiveStreamingAgentExecutor",
     "AssuranceAgentExecutor",
     "RanAgentExecutor",
+    "SpnDomainAgentExecutor",
+    "SpnDomainAgentCity2Executor",
+    "WorkbenchAgentExecutor",
 ]

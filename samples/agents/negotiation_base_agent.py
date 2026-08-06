@@ -17,7 +17,9 @@
 
 import asyncio
 import uuid
-from typing import Dict, Any
+import queue as _queue
+from pathlib import Path
+from typing import Dict, Any, Optional
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Task, TaskStatus, TaskState, Artifact, Part
@@ -27,29 +29,47 @@ from a2a_t.server import A2ATServer
 from a2a_t.negotiation.common.enums import NegotiationType
 from a2a_t.negotiation.common.models import StartNegotiationInput, NegotiationContext
 
-from common.a2at_config import get_a2at_env_path
 from common.llm import get_llm_instance
-from common.negotiation_utils import (
+from samples.agents.util.negotiation_utils import (
     NEGOTIATION_CONTEXT_KEY,
     NEGOTIATION_TEXT_KEY,
     TASK_PROMPT_KEY,
     NEGOTIATION_REQUEST_MARKER,
     build_negotiation_response_metadata,
     log_negotiation_context,
-    is_uncertain_response,
     is_follow_up_task,
-    extract_original_task_from_follow_up,
-    extract_continued_context_from_follow_up,
     cleanup_negotiation_resolution_marker,
 )
 
+# A2A-T extension URIs for pre-positioned extension detection.
+# Mirrors Java SDK's A2ATExtension enum values.
+AUTHORIZATION_T_URI = "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Authorization-T/v1"
+NOTIFICATION_T_URI = "https://projects.tmforum.org/a2aproject/telecommunication/extensions/Notification-T/v1"
+
 
 class NegotiationBaseAgentExecutor(AgentExecutor):
+    """Server-side negotiation base, mirroring Java's NegotiationBaseAgentExecutor.
+
+    Every agent that declares the Negotiation-T extension can receive and reply
+    to negotiation messages. This base implements: on a new task it starts a
+    fulfillment negotiation and replies INPUT_REQUIRED carrying the negotiation
+    context; on a follow-up ([NEGOTIATION_RESOLUTION]) it re-executes the
+    business and completes.
+
+    Pre-positioned extensions (Authorization-T / Notification-T) are detected
+    and handled before the negotiation flow: Authorization-T is stored as a
+    whitelist policy; Notification-T opens a long-lived stream that stays open
+    for later recovery results pushed via push_notification_result().
+    """
+
     def __init__(self, agent_prompt_template: str) -> None:
         self.llm = get_llm_instance()
-        env_path = get_a2at_env_path()
+        env_path = Path(__file__).resolve().parents[2] / ".env"
         self.a2at_server = A2ATServer(env_path=env_path)
         self.prompt_template = agent_prompt_template
+        self._authorization_policy: Optional[str] = None
+        self._notification_queue: "_queue.Queue[str]" = _queue.Queue()
+        self._shutdown = False
         logger.info(f"[{self.__class__.__name__}] Initialized with A2ATServer, env_path={env_path}")
 
     async def execute(
@@ -62,6 +82,7 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
         ctx_id = context.context_id or "N/A"
         logger.info(f"[{self.__class__.__name__}] execute: task_id={task_id}, context_id={ctx_id}")
 
+        # Read Task-T prompt from message metadata if present (mirrors Java SDK).
         task_t_uri = TASK_PROMPT_KEY
         try:
             if hasattr(context, 'message') and context.message:
@@ -74,12 +95,136 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
         except Exception as e:
             logger.debug(f"[{self.__class__.__name__}] Could not read TASK-T metadata: {e}")
 
+        # Detect pre-positioned extensions (Authorization-T / Notification-T).
+        # These are sent before the workflow starts via ExtensionSender.
+        pre_positioned_ext = self._detect_pre_positioned_extension(context)
+        if pre_positioned_ext:
+            if "Notification" in pre_positioned_ext:
+                await self._handle_notification_subscription(context, event_queue)
+                return
+            elif "Authorization" in pre_positioned_ext:
+                await self._handle_authorization(context, event_queue)
+                return
+
         if is_follow_up_task(user_input):
             task = await self._handle_follow_up_task(context, user_input)
         else:
             task = await self._handle_new_task(context, user_input)
 
         await event_queue.enqueue_event(task)
+
+    # ------------------------------------------------------------------
+    # Pre-positioned extension handling (GAP 8 alignment with Java SDK)
+    # ------------------------------------------------------------------
+
+    def _detect_pre_positioned_extension(self, context: RequestContext) -> Optional[str]:
+        """Detect if the incoming message is a pre-positioned extension."""
+        try:
+            if hasattr(context, 'message') and context.message:
+                msg = context.message
+                if msg.metadata:
+                    if NOTIFICATION_T_URI in msg.metadata:
+                        return "Notification-T"
+                    if AUTHORIZATION_T_URI in msg.metadata:
+                        return "Authorization-T"
+        except Exception:
+            pass
+        return None
+
+    async def _handle_authorization(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Accept and store the Authorization-T whitelist policy."""
+        try:
+            if hasattr(context, 'message') and context.message:
+                msg = context.message
+                if msg.metadata and AUTHORIZATION_T_URI in msg.metadata:
+                    self._authorization_policy = str(msg.metadata[AUTHORIZATION_T_URI])
+                    logger.info(
+                        f"[{self.__class__.__name__}] Accepted Authorization-T policy: "
+                        f"{len(self._authorization_policy)} chars"
+                    )
+        except Exception as e:
+            logger.warning(f"[{self.__class__.__name__}] Failed to read Authorization-T: {e}")
+
+        task = Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+            artifacts=[],
+            metadata={}
+        )
+        await event_queue.enqueue_event(task)
+
+    async def _handle_notification_subscription(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Handle Notification-T subscription: send ack, keep stream open for results.
+
+        Mirrors Java's handleNotificationSubscription: sends a "subscribed" ack
+        artifact, then blocks on a queue to keep the SSE stream open. Recovery
+        results pushed via push_notification_result() are forwarded as artifacts
+        with the Notification-T URI in metadata.
+        """
+        agent_tag = self.__class__.__name__
+        logger.info(f"[{agent_tag}] Notification-T subscription received, keeping stream open")
+
+        ack_task = Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+            artifacts=[
+                Artifact(
+                    artifact_id=str(uuid.uuid4()),
+                    name=f"{agent_tag} subscription",
+                    parts=[Part(text="Subscribed to recovery results")]
+                )
+            ],
+            metadata={}
+        )
+        await event_queue.enqueue_event(ack_task)
+
+        while not self._shutdown:
+            try:
+                result = await asyncio.to_thread(self._notification_queue.get, True, 2)
+                logger.info(f"[{agent_tag}] Pushing recovery result via Notification-T stream")
+                result_task = Task(
+                    id=context.task_id,
+                    context_id=context.context_id,
+                    status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+                    artifacts=[
+                        Artifact(
+                            artifact_id=str(uuid.uuid4()),
+                            name="recovery-result",
+                            parts=[Part(text=result)],
+                            metadata={NOTIFICATION_T_URI: result}
+                        )
+                    ],
+                    metadata={NOTIFICATION_T_URI: result}
+                )
+                await event_queue.enqueue_event(result_task)
+            except _queue.Empty:
+                continue
+            except Exception as e:
+                if self._shutdown:
+                    break
+                logger.debug(f"[{agent_tag}] Notification queue error: {e}")
+                continue
+        
+        logger.info(f"[{agent_tag}] Notification-T subscription closed")
+
+    def push_notification_result(self, result: str) -> None:
+        """Push a recovery result via the Notification-T stream."""
+        self._notification_queue.put_nowait(result)
+
+    def shutdown(self) -> None:
+        """Signal this executor to shut down gracefully."""
+        self._shutdown = True
+        logger.info(f"[{self.__class__.__name__}] Shutdown signal received")
+
+    def get_authorization_policy(self) -> Optional[str]:
+        """Get the pre-positioned Authorization-T whitelist policy."""
+        return self._authorization_policy
+
+    # ------------------------------------------------------------------
+    # Task handling (negotiation flow)
+    # ------------------------------------------------------------------
 
     async def _handle_new_task(self, context: RequestContext, user_input: str) -> Task:
         negotiation_result = self._start_negotiation(user_input, context.task_id, context.context_id)
@@ -93,15 +238,14 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
             except Exception as e:
                 logger.warning(f"Failed to parse negotiation context: {e}")
 
-        response = await asyncio.to_thread(self._execute_task, user_input, context.task_id, context.context_id)
-
-        uncertain = await asyncio.to_thread(is_uncertain_response, response, self.llm)
-        if uncertain:
-            logger.info(f"[{self.__class__.__name__}] Response indicates uncertainty, requesting negotiation")
+        # Mirrors Java handleNewTask: if negotiation is needed, request it
+        # WITHOUT executing the business. Business runs on the follow-up.
+        if self.needs_negotiation(user_input):
+            logger.info(f"[{self.__class__.__name__}] needs_negotiation=True, requesting negotiation")
             metadata = build_negotiation_response_metadata(
                 negotiation_context_data=negotiation_context_data,
                 negotiation_text=negotiation_text,
-                negotiation_concern=response,
+                negotiation_concern="needs clarification",
             )
             return Task(
                 id=context.task_id,
@@ -110,12 +254,14 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
                 artifacts=[
                     Artifact(
                         artifact_id=str(uuid.uuid4()),
-                        parts=[Part(text=f"{NEGOTIATION_REQUEST_MARKER} {self.__class__.__name__} needs more information to complete this task.\n{response}")]
+                        parts=[Part(text=f"{NEGOTIATION_REQUEST_MARKER} {self.__class__.__name__} needs more information to complete this task.")]
                     )
                 ],
                 metadata=metadata
             )
 
+        # No negotiation needed: execute business and complete
+        response = await asyncio.to_thread(self._execute_task, user_input, context.task_id, context.context_id)
         return self._build_task_response(
             context=context,
             response=response,
@@ -125,23 +271,9 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
     async def _handle_follow_up_task(self, context: RequestContext, user_input: str) -> Task:
         logger.info(f"[{self.__class__.__name__}] Detected follow-up task with negotiation resolution")
         cleaned_input = cleanup_negotiation_resolution_marker(user_input)
-        original_task = extract_original_task_from_follow_up(user_input)
-
-        continued_context = extract_continued_context_from_follow_up(user_input)
-        if continued_context:
-            try:
-                continued_ctx = NegotiationContext.from_context(continued_context)
-                log_negotiation_context(continued_ctx, f"[{self.__class__.__name__}] continued negotiation")
-                if continued_ctx.status.value == "agreed":
-                    logger.info(f"[{self.__class__.__name__}] Negotiation agreed at round {continued_ctx.round}, executing")
-                negotiation_context_data = continued_context
-            except Exception as e:
-                logger.warning(f"Failed to parse continued negotiation context: {e}")
-                _ = self._start_negotiation(cleaned_input or user_input, context.task_id, context.context_id)
-                negotiation_context_data = {}
-        else:
-            _ = self._start_negotiation(cleaned_input or user_input, context.task_id, context.context_id)
-            negotiation_context_data = {}
+        # Mirrors Java handleFollowUp: clean input, run business, complete.
+        # No new negotiation is started -- the negotiation is already resolved.
+        negotiation_context_data = {}
 
         execute_input = cleaned_input if cleaned_input else user_input
         response = await asyncio.to_thread(self._execute_task, execute_input, context.task_id, context.context_id)
@@ -168,13 +300,22 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
             )
             negotiation_text = negotiation_result.get(NEGOTIATION_TEXT_KEY)
             if negotiation_text:
-                logger.info(f"[{self.__class__.__name__}] Started fulfillment negotiation: {negotiation_text[:100]}...")
+                logger.info(f"[{self.__class__.__name__}] Started fulfillment negotiation: {negotiation_text}")
             else:
                 logger.info(f"[{self.__class__.__name__}] Started fulfillment negotiation (no text in result)")
             return negotiation_result
         except Exception as e:
             logger.error(f"[{self.__class__.__name__}] Failed to start negotiation: {e}")
             return {}
+
+    def needs_negotiation(self, input_text: str) -> bool:
+        """Whether the incoming task parameters require a Negotiation-T round.
+
+        Mirrors Java SDK's needsNegotiation(input). Default: False (parameters
+        sufficient, skip negotiation and run business directly). Override to
+        return True when the agent needs clarification.
+        """
+        return False
 
     def _execute_task(self, user_input: str, task_id: str = None, context_id: str = None) -> str:
         prompt = self.prompt_template.format(task=user_input)
@@ -186,7 +327,7 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
         if ctx_lines:
             prompt = "## Execution Context\n" + "\n".join(ctx_lines) + "\n\n" + prompt
         _, res = self.llm.ask_llm(prompt)
-        logger.info(f"[{self.__class__.__name__}] Task: {user_input[:50]}..., Result: {res[:100]}...")
+        logger.info(f"[{self.__class__.__name__}] Task: {user_input}, Result: {res}")
         return res
 
     def _build_task_response(
@@ -199,6 +340,9 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
             negotiation_context_data=negotiation_context if negotiation_context else None,
             negotiation_text=None,
         )
+        # Put the agent response in Task-T metadata, mirroring the Java SDK demo's
+        # buildResponseMetadata which sets TASK_PROMPT_KEY -> response.
+        metadata[TASK_PROMPT_KEY] = response
 
         return Task(
             id=context.task_id,

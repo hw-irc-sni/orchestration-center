@@ -1,4 +1,4 @@
-<!--
+﻿<!--
 Copyright (c) 2026 Huawei Technologies Co., Ltd.
 All Rights Reserved.
 
@@ -136,14 +136,14 @@ sequenceDiagram
 |----------|------------|
 | **Visual Designer** | React Flow-based drag-and-drop workflow builder with automatic Dagre layout |
 | **Multi-Mode Creation** | PDF/BPMN document import, manual drag-and-drop, and natural-language-to-workflow via LLM |
-| **A2A-T Negotiation** | Fulfillment negotiation between agents via a2a-t-sdk, context carried in Task.metadata |
-| **Execution Engine** | `DynamicWorkflowEngine` — async DAG traversal, parallel A2A calls, conditional LLM routing, SSE streaming |
+| **A2A-T Negotiation** | Fulfillment negotiation between agents via workflow-engine, context carried in Task.metadata |
+| **Execution Engine** | `OrchestrationEngine` — thin A2A-T dispatch channel; PSOP workflow execution delegated to the Workbench Agent via workflow-engine SDK |
 | **Semantic Search** | Natural-language retrieval of previously built workflows |
 | **Dual API Layer** | Internal API (`/rest/v1/orchestrate/*`) for the frontend + External API (`/api/v1/*`) for third-party integration |
 | **SSE Streaming** | Real-time execution progress via 11 event types (init, start, agent_request, agent_response, psop_update, negotiation_request, negotiation_resolved, negotiation_failed, complete, error, close) |
 | **Pluggable Storage** | File-based JSON or PostgreSQL persistence via HandlerRegistry |
 | **Template Marketplace** | Pre-built workflow templates for telecom scenarios (live broadcast, energy saving, fault handling) |
-| **Sample Agents** | 11 sample A2A agents with negotiation support for testing and demonstration |
+| **Sample Agents** | 10 sample A2A agents with negotiation support for testing and demonstration |
 
 ## Quick Start
 
@@ -271,7 +271,7 @@ flowchart TB
         direction TB
         api["Dual API Layer<br/>Internal /rest/v1/orchestrate/*<br/>External /api/v1/*"]
         domain["Core Domain<br/>PSOP Generator · Intent Generator<br/>Semantic Search · Publisher"]
-        engine["DynamicWorkflowEngine<br/>DAG Traversal · Parallel A2A Calls<br/>LLM Routing · SSE Push"]
+        engine["OrchestrationEngine<br/>Thin A2A-T Dispatch Channel<br/>SSE Event Forwarding"]
     end
 
     subgraph storage["Storage"]
@@ -292,9 +292,10 @@ flowchart TB
     domain --> engine
     engine --> file
     engine --> pg
-    engine -->|"A2A Protocol<br/>+ A2A-T Negotiation"| a1
-    engine --> a2
-    engine --> a3
+    engine -->|"A2A-T Protocol"| wb["Workbench Agent<br/>(Leader · workflow-engine SDK)"]
+    wb -->|"A2A Protocol<br/>+ A2A-T Negotiation"| a1
+    wb --> a2
+    wb --> a3
 
     style backend fill:#e1f5fe,stroke:#0288d1
     style frontend fill:#e8f5e9,stroke:#388e3c
@@ -441,8 +442,7 @@ The external API (`/api/v1/*`) is protected by mTLS at the TLS layer when `enabl
 | `etc/conf/server.properties` | TLS versions, ciphers, rate limiting, connection limits, client_verify_server |
 | `etc/conf/db_config.json` | PostgreSQL connection settings |
 | `common/config/llm_config.json` | LLM/embed/rerank model endpoints (overridable via `LLM_*`, see below) |
-| `.env` | Your local overrides — gitignored, never overwritten by the app |
-| `etc/conf/a2at.env` | **Generated** a2a-t-sdk config, rewritten at every startup — do not edit |
+| `.env` | Your local overrides — gitignored. Also where the negotiation SDK reads its `A2AT_*` variables directly (see below) |
 | `common/config/README_en.md` | LLM configuration guide |
 | `generate_selfsign_cert.py` | Self-signed certificate generator (RSA 3072) |
 | `common/ssl/client_ssl_context.py` | Client-side SSL context factory for outbound HTTPS |
@@ -468,6 +468,9 @@ Precedence is **environment > `.env` > `llm_config.json`**. Structured fields (`
 `body`, `response`) are request templates and stay in the JSON. In Docker only the `LLM_CHAT_*`
 variables are forwarded (see `docker-compose.yml`); other capabilities stay JSON-configured there.
 
+This configures the orchestration backend's own LLM calls (intent parsing, PSOP retrieval, PDF/BPMN
+summarization). It is independent of the A2A-T negotiation SDK's configuration below.
+
 ```bash
 LLM_CHAT_PROVIDER=openai
 LLM_CHAT_MODEL=gpt-4o
@@ -479,18 +482,23 @@ See [`.env.example`](.env.example) for DeepSeek, Qwen and self-hosted-gateway ex
 
 ## A2A-T SDK Integration
 
-This project integrates a2a-t-sdk for agent fulfillment negotiation. Its configuration
-(`A2AT_LLM_PROVIDER`, `A2AT_LLM_MODEL`, `A2AT_LLM_API_KEY`, `A2AT_LLM_BASE_URL`,
-`A2AT_NEGOTIATION_STATE_STORE_TYPE`, …) lives in `etc/conf/a2at.env`, which
-`common/a2at_config.py` **regenerates on every startup** from the resolved chat config above.
-Do not edit that file, and do not put `A2AT_*` variables in `.env` — they are ignored. Change
-`LLM_CHAT_*` (or `llm_config.json`) and both the orchestration backend and the negotiation path
-follow.
+This project integrates the workflow-engine SDK for Workbench Agent workflow execution and agent
+fulfillment negotiation. Its configuration (`A2AT_LLM_PROVIDER`, `A2AT_LLM_MODEL`,
+`A2AT_LLM_API_KEY`, `A2AT_LLM_BASE_URL`, `A2AT_NEGOTIATION_STATE_STORE_TYPE`, …) is read directly
+from the repo-root `.env` — set it there:
 
-> **Upgrading from an earlier version:** the generated file used to be the repo-root `.env`.
-> If you hand-edited its `A2AT_*` block, move those settings to `LLM_CHAT_*`. Also note
-> `verify_ssl` in `llm_config.json` previously had no effect and every call verified TLS; it is
-> now honored, so an existing `verify_ssl: false` will genuinely disable verification.
+```bash
+A2AT_LLM_PROVIDER=deepseek
+A2AT_LLM_MODEL=deepseek-chat
+A2AT_LLM_API_KEY=<your-api-key>
+A2AT_LLM_BASE_URL=https://api.deepseek.com
+A2AT_NEGOTIATION_STATE_STORE_TYPE=in_memory
+```
+
+> **Upgrading from an earlier version:** previous releases auto-generated this block into
+> `etc/conf/a2at.env` from the `LLM_CHAT_*` settings above (via `common/a2at_config.py`). That
+> generator is gone — `A2AT_*` and `LLM_CHAT_*` are now two independent config surfaces, and
+> `A2AT_*` must be set explicitly in `.env`.
 
 ## Documentation
 

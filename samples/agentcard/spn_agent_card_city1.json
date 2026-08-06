@@ -1,36 +1,15 @@
 [
   {
-    "name": "Assurance Agent",
-    "description": "负责保障策略及其恢复策略的生成。",
+    "name": "SPN Domain Agent City1",
+    "description": "SPN Domain Agent City1 - Yuedong OMC, private-line fault diagnosis with Bearer auth",
     "provider": {
       "organization": "Huawei",
-      "url": ""
+      "url": "https://www.huawei.com"
     },
-    "version": "0.1.0",
-    "iconUrl": "",
-    "skills": [
-      {
-        "id": "strategy-generation",
-        "name": "Strategy Generation",
-        "description": "将赛事保障需求转换为网络需求，包含带宽上下行要求等",
-        "tags": [
-          "assurance",
-          "strategy"
-        ]
-      },
-      {
-        "id": "recovery-delivery",
-        "name": "Recovery Delivery",
-        "description": "恢复保障前网络配置",
-        "tags": [
-          "assurance",
-          "recovery"
-        ]
-      }
-    ],
+    "version": "1.0.0",
     "capabilities": {
-      "pushNotifications": false,
       "streaming": true,
+      "pushNotifications": false,
       "extendedAgentCard": false,
       "extensions": [
         {
@@ -56,16 +35,44 @@
       ]
     },
     "defaultInputModes": [
-      "text"
+      "application/json",
+      "text/plain"
     ],
     "defaultOutputModes": [
-      "text"
+      "application/json",
+      "text/plain"
+    ],
+    "skills": [
+      {
+        "id": "SPN-private-line-service-complain-diagnosis",
+        "name": "SPN专线业务投诉诊断",
+        "description": "提供SPN领域专线业务网络侧故障根因诊断能力",
+        "tags": [
+          "SPN专线业务投诉诊断"
+        ]
+      }
+    ],
+    "securitySchemes": {
+      "bearerAuth": {
+        "httpAuthSecurityScheme": {
+          "scheme": "Bearer",
+          "description": "使用用户名和密码通过登录接口查询accessSession后，使用该accessSession进行bearer认证。"
+        }
+      }
+    },
+    "securityRequirements": [
+      {
+        "schemes": {
+          "bearerAuth": {}
+        }
+      }
     ],
     "supportedInterfaces": [
       {
         "protocolBinding": "HTTP+JSON",
         "protocolVersion": "1.0",
-        "url": "https://127.0.0.1:8902"
+        "url": "https://127.0.0.1:26335/a2a/json",
+        "tenant": ""
       }
     ]
   }

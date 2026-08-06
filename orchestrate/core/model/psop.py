@@ -39,6 +39,7 @@ class TaskStatus(str, Enum):
 class StepType(str, Enum):
     ALL_SUCCESS = "AllSuccess"
     ANY_SUCCESS = "AnySuccess"
+    SELF_LOOP = "SelfLoop"
 
 
 class Task(BaseModel):
@@ -60,8 +61,10 @@ class Step(BaseModel):
     type: StepType = Field(
         StepType.ALL_SUCCESS,
         description="Step success condition - "
-        "AllSuccess (all subtasks succeed) or AnySuccess (any subtask succeeds)",
-        examples=[StepType.ALL_SUCCESS, StepType.ANY_SUCCESS],
+        "AllSuccess (all subtasks succeed), AnySuccess (any subtask succeeds), "
+        "or SelfLoop (the workflow-executing agent handles the task locally "
+        "via onSelfTask, no A2A-T message to itself)",
+        examples=[StepType.ALL_SUCCESS, StepType.ANY_SUCCESS, StepType.SELF_LOOP],
     )
     subtasks: List[Task] = Field(..., description="List of subtasks within the step"
                                                   "no dependencies between subtasks, can be executed in parallel")

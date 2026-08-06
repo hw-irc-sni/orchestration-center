@@ -48,7 +48,7 @@ from common.config import (
 )
 from common.custom.default_handle import HandlerRegistry
 from common.custom.interface_type import InterfaceType
-from orchestrate.server.sse_executor import run_psop_sse
+from orchestrate.server.sse_executor import dispatch_intent_sse
 from orchestrate.server.response_utils import ok, created, error, get_agent_cards
 from common.log.audit_logger import audit_logger, OperationObject, OperationName, LogLevel, OperationResult
 from common.util.config_util import get_conf
@@ -97,6 +97,11 @@ async def _setup_exception_handler():
             return
         loop.default_exception_handler(context)
     loop.set_exception_handler(_handler)
+
+@app.on_event("shutdown")
+async def _cleanup_resources():
+    """Clean up lingering async resources on shutdown."""
+    logger.info("Cleaning up server resources...")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -221,7 +226,6 @@ async def register(request: RegisterRequest):
     conf = get_conf()
     if conf.get("persistence_mode", "file").lower() != "postgresql":
         raise HTTPException(status_code=400, detail="Registration requires PostgreSQL persistence mode")
-    import re
     if not re.fullmatch(r"^[a-zA-Z][a-zA-Z0-9_-]{2,63}$", request.username):
         raise HTTPException(status_code=400, detail="Username must start with a letter and contain only letters, digits, underscores or hyphens (3-64 chars)")
     from database.utils.user_store import create_user, user_exists
@@ -857,6 +861,7 @@ execute_semaphore = anyio.Semaphore(int(config.get(FLOW_CTL_PARALLEL_START_PROCE
 async def execute_workflow(
     psop_id: str = Query(..., description="PSOP workflow ID to execute"),
     user_intent: str = Query(None, description="Runtime user intent for context injection"),
+    target_agent: str = Query(None, description="Target host agent name to dispatch to"),
     lang: str = Query(None, description="Language for agent responses (zh/en)"),
     _: Any = Depends(RateLimiter(config, "start_process_stream"))
 ):
@@ -875,7 +880,8 @@ async def execute_workflow(
         logger.info(f"Workflow loaded: name={psop.name}, steps={len(psop.steps)}")
         agent_cards = await get_agent_cards()
 
-        return await run_psop_sse(psop, agent_cards, runtime_intent=user_intent, lang=lang)
+        intent = user_intent or psop.name or psop_id
+        return await dispatch_intent_sse(agent_cards, intent, target_agent=target_agent, lang=lang)
     except anyio.WouldBlock:
         raise HTTPException(status_code=503, detail="Server is busy")
     except HTTPException:
@@ -886,6 +892,49 @@ async def execute_workflow(
     finally:
         if acquired:
             execute_semaphore.release()
+
+dispatch_semaphore = anyio.Semaphore(int(config.get(FLOW_CTL_PARALLEL_START_PROCESS_STREAM, 10)))
+
+@router.get("/dispatch")
+async def dispatch_to_agent(
+    intent: str = Query(..., description="Natural language intent to dispatch"),
+    agent_name: str = Query(..., description="Target host agent name (must be registered)"),
+    lang: Optional[str] = Query(None, description="Language hint (zh/en)"),
+    _: Any = Depends(RateLimiter(config, "start_process_stream"))
+):
+    """Dispatch an intent to a host agent via A2A-T.
+
+    The orchestration center does NOT execute the workflow itself.
+    It sends the intent as an A2A-T Task-T message to the selected host
+    agent. The host agent receives it, searches/loads its own PSOP,
+    executes the workflow, and streams observable events back.
+
+    Returns an SSE stream that transparently forwards the host agent's
+    execution events to the frontend for real-time visualization.
+    """
+    acquired = False
+    try:
+        dispatch_semaphore.acquire_nowait()
+        acquired = True
+        logger.info(f"Dispatching intent to agent '{agent_name}': {intent[:80]}")
+
+        # Resolve the target agent's AgentCard from the registry
+        agent_cards = await get_agent_cards()
+
+        # Use the slim OrchestrationEngine which extracts __sdk_event__ metadata
+        # from the A2A-T TaskUpdate stream.
+        logger.info(f"Dispatching to {agent_name} via OrchestrationEngine (slim channel)")
+        return await dispatch_intent_sse(agent_cards, intent, target_agent=agent_name, lang=lang)
+    except anyio.WouldBlock:
+        raise HTTPException(status_code=503, detail="Server is busy")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Dispatch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if acquired:
+            dispatch_semaphore.release()
 
 @router.delete("/execution-records/{execution_id}")
 async def delete_execution_record(execution_id: str):

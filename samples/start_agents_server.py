@@ -18,6 +18,7 @@
 import asyncio
 import json
 import os
+import signal
 from pathlib import Path
 
 import uvicorn
@@ -25,7 +26,8 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_rest_routes, create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCard
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from starlette.responses import JSONResponse
 from google.protobuf.json_format import MessageToDict
 from loguru import logger
 from typing import List
@@ -40,13 +42,19 @@ from samples.agents.energy_saving_intent_agent import EnergySavingIntentAgentExe
 from samples.agents.live_streaming_agent import LiveStreamingAgentExecutor
 from samples.agents.assurance_agent import AssuranceAgentExecutor
 from samples.agents.ran_agent import RanAgentExecutor
-from samples.agents.dispatch_agent import DispatchAgentExecutor
-from samples.agents.spn_agent_city1 import SpnCity1AgentExecutor
-from samples.agents.spn_agent_city2 import SpnCity2AgentExecutor
-from samples.agents.uncertainty_agent import UncertaintySimulationAgentExecutor
 from samples.agents.spn_domain_agent import SpnDomainAgentExecutor
-from samples.agents.workbench_platform_agent import WorkbenchPlatformAgentExecutor
-from common.a2at_config import ensure_env_file_exists
+from samples.agents.spn_domain_agent_city2 import SpnDomainAgentCity2Executor
+from samples.agents.workbench_agent import WorkbenchAgentExecutor
+
+import time as _time
+import secrets as _secrets
+
+# Global list to track all agent executors for graceful shutdown
+_agent_executors = []
+
+
+
+
 
 
 def _agent_card_to_dict(agent_card: AgentCard) -> dict:
@@ -142,12 +150,9 @@ async def start_server(agent_card: AgentCard, port: int, host: str = "127.0.0.1"
         "Live Streaming Agent": LiveStreamingAgentExecutor,
         "Assurance Agent": AssuranceAgentExecutor,
         "RAN Agent": RanAgentExecutor,
-        "Transport Workbench Agent": DispatchAgentExecutor,
-        "SPN Fault Handling Agent City1 OMC": SpnCity1AgentExecutor,
-        "SPN Fault Handling Agent City2 OMC": SpnCity2AgentExecutor,
-        "Uncertainty Simulation Agent": UncertaintySimulationAgentExecutor,
-        "SPN Domain Agent": SpnDomainAgentExecutor,
-        "Workbench Platform Agent": WorkbenchPlatformAgentExecutor,
+        "Transport Workbench Agent": WorkbenchAgentExecutor,
+        "SPN Domain Agent City1": SpnDomainAgentExecutor,
+        "SPN Domain Agent City2": SpnDomainAgentCity2Executor
     }
     agent_name = agent_card.name
     agent_class = agent2class.get(agent_name)
@@ -158,6 +163,7 @@ async def start_server(agent_card: AgentCard, port: int, host: str = "127.0.0.1"
 
     try:
         agent_impl = agent_class()
+        _agent_executors.append(agent_impl)
     except Exception as e:
         logger.error(f"Failed to initialize agent '{agent_name}': {e}")
         return
@@ -169,6 +175,38 @@ async def start_server(agent_card: AgentCard, port: int, host: str = "127.0.0.1"
     )
 
     app = FastAPI()
+
+    # --- Auth support: login endpoint for agents declaring securitySchemes ---
+    _VALID_TOKENS = {}  # token -> expiry timestamp
+
+    has_security = agent_card.security_schemes and agent_card.security_requirements
+    if has_security:
+        login_path = "/rest/plat/smapp/v1/oauth/token"
+        logger.info(f"Agent '{agent_name}' auth login endpoint: {login_path}")
+
+        @app.api_route(login_path, methods=["PUT", "POST"])
+        async def _agent_login(request: Request):
+            """Mock login: accept fixed credentials, return accessSession."""
+            body = {}
+            ct = request.headers.get("content-type", "")
+            if "json" in ct:
+                try:
+                    body = await request.json()
+                except Exception:
+                    body = {}
+            else:
+                form = await request.form()
+                body = dict(form)
+            username = body.get("userName") or body.get("username")
+            password = body.get("value") or body.get("password")
+            if username == "admin" and password == "Admin@123":
+                token = _secrets.token_urlsafe(24)
+                _VALID_TOKENS[token] = _time.time() + 3600
+                logger.info(f"[Auth] Login succeeded for agent '{agent_name}', token issued")
+                return {"accessSession": token}
+            logger.warning(f"[Auth] Login failed for agent '{agent_name}': bad credentials")
+            return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
+
 
     agent_card_routes = create_agent_card_routes(agent_card=agent_card)
     app.routes.extend(agent_card_routes)
@@ -187,21 +225,33 @@ async def start_server(agent_card: AgentCard, port: int, host: str = "127.0.0.1"
             app.routes.extend(rest_routes)
             logger.info(f"Agent '{agent_name}' REST endpoint: {path}")
 
-    config = uvicorn.Config(app, host=host, port=port)
+    # Enable HTTPS using the orchestration center self-signed certificate so the
+    # agent server matches the https:// URLs declared in the agent card.
+    ssl_dir = Path(__file__).resolve().parent.parent / "etc" / "ssl"
+    cert_path = ssl_dir / "server.cer"
+    key_path = ssl_dir / "server_key.pem"
+    nopass_key_path = ssl_dir / "server_key_nopass.pem"
+    ssl_kwargs = {}
+    if cert_path.is_file() and key_path.is_file():
+        # Prefer the unencrypted key to avoid "Enter PEM pass phrase:" prompts
+        actual_key = nopass_key_path if nopass_key_path.is_file() else key_path
+        ssl_kwargs = {"ssl_certfile": str(cert_path), "ssl_keyfile": str(actual_key)}
+        if not nopass_key_path.is_file():
+            pwd_path = ssl_dir / "cert_pwd"
+            if pwd_path.is_file():
+                ssl_kwargs["ssl_keyfile_password"] = pwd_path.read_text(encoding="utf-8").strip()
+        logger.info(f"Agent {agent_name!r} starting with HTTPS (cert={cert_path.name})")
+    else:
+        logger.warning(f"Agent {agent_name!r} SSL certs not found at {ssl_dir}, starting HTTP")
+    config = uvicorn.Config(app, host=host, port=port, timeout_graceful_shutdown=2, **ssl_kwargs)
     uvicorn_server = uvicorn.Server(config)
     try:
         await uvicorn_server.serve()
-    except SystemExit:
-        logger.warning(f"Failed to start server for '{agent_name}' on {host}:{port}, continuing...")
+    except (SystemExit, asyncio.CancelledError):
+        pass
 
 
 async def main() -> None:
-    try:
-        ensure_env_file_exists()
-        logger.info("A2AT SDK environment file initialized")
-    except Exception as e:
-        logger.error(f"ensure_env_file_exists failed (negotiation-capable agents may fail to start): {e}")
-
     try:
         pre_insert_psop()
     except Exception as e:
@@ -253,14 +303,55 @@ async def main() -> None:
         )
         tasks.append(task)
         logger.info(f"Starting server for '{agent_name}' on {agent_card.supported_interfaces[0].url}")
+    
+    # Set up signal handlers for graceful shutdown
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
+    
+    def signal_handler():
+        logger.info("Shutdown signal received, stopping all servers...")
+        shutdown_event.set()
+    
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, signal_handler)
+        except NotImplementedError:
+            # Windows doesn't support add_signal_handler
+            pass
+    
     try:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Wait for either all tasks to complete or shutdown signal
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_EXCEPTION,
+            timeout=None
+        )
+        
+        # If we get here due to shutdown signal or exception, cancel pending tasks
+        if shutdown_event.is_set() or pending:
+            logger.info("Shutting down all servers...")
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            logger.info("All servers stopped")
     except KeyboardInterrupt:
-        logger.info(f"Shutting down all servers...")
+        logger.info("Keyboard interrupt received, shutting down...")
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info(f"All servers stopped")
+        logger.info("All servers stopped")
+    finally:
+        # Shutdown all agent executors
+        logger.info(f"Shutting down {len(_agent_executors)} agent executors...")
+        for executor in _agent_executors:
+            if hasattr(executor, 'shutdown'):
+                try:
+                    executor.shutdown()
+                except Exception as e:
+                    logger.warning(f"Error shutting down executor {executor.__class__.__name__}: {e}")
+        # Give executors a moment to clean up
+        await asyncio.sleep(0.5)
+        logger.info("All agent executors shut down")
 
 
 if __name__ == "__main__":

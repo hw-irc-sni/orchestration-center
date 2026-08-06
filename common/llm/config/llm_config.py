@@ -28,8 +28,7 @@ class ModelConfig:
     provider: str = "openai"
     model: str = ""
     url: str = ""
-    # API root for SDK-style clients (which append their own path). Derived from `url`
-    # when left empty — see common/a2at_config.py.
+    # API root for SDK-style clients (which append their own path).
     base_url: str = ""
     api_key: str = ""
     enable_thinking: bool = False

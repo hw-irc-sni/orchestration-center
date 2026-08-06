@@ -21,7 +21,7 @@ from a2a.types import AgentCard
 from google.protobuf.json_format import MessageToDict
 from loguru import logger
 
-from common.ssl.client_ssl_context import create_client_ssl_context
+from workflow_engine.client.ssl_context import create_ssl_context as create_client_ssl_context
 
 
 class AgentRegistryClient:

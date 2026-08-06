@@ -72,7 +72,7 @@ class ConnectionLimitMiddleware(BaseHTTPMiddleware):
                 self.active_connections -= 1
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
-    _SSE_PATHS = {"/execute", "/api/v1/orchestrate/execute"}
+    _SSE_PATHS = {"/execute", "/api/v1/orchestrate/execute", "/dispatch", "/rest/v1/orchestrate/dispatch"}
 
     def __init__(self, app, timeout_seconds: int):
         super().__init__(app)

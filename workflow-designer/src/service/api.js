@@ -201,7 +201,7 @@ export async function matchWorkflowsTopN(intent, topN = 3) {
 
 // ──── Workflow Execution ────
 
-export function getStartProcessStreamUrl(psopId, userIntent = '', lang = '') {
+export function getStartProcessStreamUrl(psopId, userIntent = '', lang = '', targetAgent = '') {
     const base = `${ORCHESTRATE_BASE()}/execute?psop_id=${psopId}`;
     const params = [];
     const token = getAuthToken();
@@ -214,10 +214,28 @@ export function getStartProcessStreamUrl(psopId, userIntent = '', lang = '') {
     if (lang) {
         params.push(`lang=${encodeURIComponent(lang)}`);
     }
+    if (targetAgent) {
+        params.push(`target_agent=${encodeURIComponent(targetAgent)}`);
+    }
     if (params.length > 0) {
         return `${base}&${params.join('&')}`;
     }
     return base;
+}
+
+export function getDispatchStreamUrl(intent, agentName, lang = '') {
+    const base = `${ORCHESTRATE_BASE()}/dispatch`;
+    const params = [];
+    const token = getAuthToken();
+    if (token) {
+        params.push(`access_token=${encodeURIComponent(token)}`);
+    }
+    params.push(`intent=${encodeURIComponent(intent)}`);
+    params.push(`agent_name=${encodeURIComponent(agentName)}`);
+    if (lang) {
+        params.push(`lang=${encodeURIComponent(lang)}`);
+    }
+    return `${base}?${params.join('&')}`;
 }
 
 // ──── Execution Records ────

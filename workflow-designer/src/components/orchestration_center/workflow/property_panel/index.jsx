@@ -422,6 +422,7 @@ const PropertyPanel = ({ selectedElement, nodes, edges, setPhenomenon, setNodes,
                                 >
                                     <option value="AllSuccess">{t('workflow.panel.stepTypeAllSuccess')}</option>
                                     <option value="AnySuccess">{t('workflow.panel.stepTypeAnySuccess')}</option>
+                                    <option value="SelfLoop">{t('workflow.panel.stepTypeSelfLoop')}</option>
                                 </select>
                             </div>
 
