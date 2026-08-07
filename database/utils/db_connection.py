@@ -17,6 +17,7 @@
 
 import json
 import re
+import threading
 from pathlib import Path
 
 import psycopg2
@@ -50,36 +51,52 @@ class _ConnInfoHolder:
             validate_database_name(cls._instance.get('database', "orchestration_center"))
         return cls._instance
 
+# create_connection() is called on every /rest/v1/orchestrate/* request
+# (via is_auth_enabled() -> has_any_user()), so create_database_if_not_exists()
+# would otherwise open a second, throwaway connection to the `postgres`
+# maintenance database on every single request. The database's existence
+# only needs confirming once per process -- it doesn't spontaneously
+# disappear -- so cache a successful check (see #40).
+_database_verified = False
+_database_verified_lock = threading.Lock()
+
 def create_database_if_not_exists():
-    conn_info = _ConnInfoHolder.get()
-    default_conn_info = {**conn_info,  "database": "postgres"}
-    try:
-        conn = psycopg2.connect(**default_conn_info)
-        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        cursor = conn.cursor()
+    global _database_verified
+    if _database_verified:
+        return True
+    with _database_verified_lock:
+        if _database_verified:
+            return True
+        conn_info = _ConnInfoHolder.get()
+        default_conn_info = {**conn_info,  "database": "postgres"}
+        try:
+            conn = psycopg2.connect(**default_conn_info)
+            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            cursor = conn.cursor()
 
-        database_name = conn_info.get('database', "orchestration_center")
-        cursor.execute(
-            sql.SQL("SELECT 1 FROM pg_database WHERE datname = {}").format(
-                sql.Literal(database_name)
-            )
-        )
-        exists = cursor.fetchone()
-
-        if not exists:
+            database_name = conn_info.get('database', "orchestration_center")
             cursor.execute(
-                sql.SQL("CREATE DATABASE {}").format(
-                    sql.Identifier(database_name)
+                sql.SQL("SELECT 1 FROM pg_database WHERE datname = {}").format(
+                    sql.Literal(database_name)
                 )
             )
-            logger.info(f"Database {database_name} created successfully")
+            exists = cursor.fetchone()
 
-        cursor.close()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to create database: {e}")
-        return False
+            if not exists:
+                cursor.execute(
+                    sql.SQL("CREATE DATABASE {}").format(
+                        sql.Identifier(database_name)
+                    )
+                )
+                logger.info(f"Database {database_name} created successfully")
+
+            cursor.close()
+            conn.close()
+            _database_verified = True
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create database: {e}")
+            return False
 
 def create_connection():
     try:

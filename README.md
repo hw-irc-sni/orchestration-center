@@ -381,7 +381,7 @@ python generate_access_password.py
 | Config Key | Description |
 |------------|-------------|
 | `enable_https` | Enable HTTPS for the backend server. |
-| `verify_client` | Require client certificate (mTLS). |
+| `verify_client` | Require client certificate (mTLS). Defaults to required when unset or set to anything other than the literal `false`; only an explicit `verify_client=false` in `server.conf` disables it. |
 | `ssl_certfile` | Server certificate path. |
 | `ssl_keyfile` | Server private key path (encrypted). |
 | `ssl_ca_certs` | CA trust store for verifying client certificates. |
@@ -406,7 +406,9 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 2. Update `etc/conf/server.conf`:
    ```ini
    enable_https=true
-   verify_client=false          # set to true for mTLS (requires client certs)
+   verify_client=true           # mTLS -- clients must present a certificate. Set to
+                                 # false only if you understand this leaves the
+                                 # external API (see below) with no authentication.
    agent_registry_url=https://127.0.0.1:5000   # if registry center also uses HTTPS
    ```
 
@@ -423,6 +425,8 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 ### External API Protection
 
 The external API (`/api/v1/*`) is protected by mTLS at the TLS layer when `enable_https=true` and `verify_client=true`. Clients must present a valid certificate during the TLS handshake -- no application-layer check needed.
+
+**With the shipped `enable_https=false` default, the external API has no protection at all** -- no mTLS (there's no TLS layer to begin with) and no application-layer check (`auth_middleware` only guards the internal API, `/rest/v1/orchestrate/*`, by design). Anything reachable on the network can call it. Don't expose a default (HTTP) deployment beyond local development without a reverse proxy, firewall, or network policy in front of it -- and once you do enable HTTPS, leave `verify_client` at its secure default (`true`) unless you have another authentication layer in place.
 
 ### Auth Endpoints
 
@@ -442,7 +446,7 @@ The external API (`/api/v1/*`) is protected by mTLS at the TLS layer when `enabl
 |-------------|---------|
 | `etc/conf/server.conf` | Server IP, port, TLS certificates, persistence mode, registry URL, access password |
 | `etc/conf/server.properties` | TLS versions, ciphers, rate limiting, connection limits, client_verify_server |
-| `etc/conf/db_config.json` | PostgreSQL connection settings |
+| `etc/conf/db_config.json` | PostgreSQL connection settings — gitignored; copy `etc/conf/db_config.json.template` to get started (only needed for `persistence_mode=postgresql`) |
 | `common/config/llm_config.json` | LLM/embed/rerank model endpoints (overridable via `LLM_*`, see below) |
 | `.env` | Your local overrides — gitignored. Also where the negotiation SDK reads its `A2AT_*` variables directly (see below) |
 | `common/config/README_en.md` | LLM configuration guide |

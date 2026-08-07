@@ -162,6 +162,7 @@ data/workflow_storage/ # File-based persistence (PSOP, PreFlow, execution record
 **Local-only files (do NOT commit):**
 - `workflow-designer/src/service/api.js` — Contains local debug configuration (API endpoint). Keep local modifications for development, do not include in commits.
 - `etc/conf/server.conf` — Local server configuration. Revert any local changes before committing.
+- `etc/conf/db_config.json` — Local PostgreSQL connection settings, including credentials. Gitignored; copy `etc/conf/db_config.json.template` to get started, and never commit the real file.
 
 ## Key commands reference
 

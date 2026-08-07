@@ -127,11 +127,27 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content=error(422, "; ".join(messages)),
     )
 
+# Query param keys that commonly carry credentials. access_token in
+# particular is how the session token reaches the backend for SSE
+# execution requests -- EventSource can't set an Authorization header, so
+# api.js puts it in the URL instead (see orchestrate/server/auth.py's
+# _extract_token). Logging it verbatim would write a live, still-valid
+# bearer token into the application log on every workflow execution.
+_SENSITIVE_QUERY_PARAM_KEYS = frozenset({"token", "access_token", "password", "api_key", "secret"})
+
+
+def _redact_sensitive_params(params: dict) -> dict:
+    return {
+        key: ("***" if key.lower() in _SENSITIVE_QUERY_PARAM_KEYS else value)
+        for key, value in params.items()
+    }
+
+
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
     request_id = str(uuid.uuid4())[:8]
     client_ip = request.client.host if request.client else "unknown"
-    query_params = dict(request.query_params)
+    query_params = _redact_sensitive_params(dict(request.query_params))
     logger.info(f"[{request_id}] --> {request.method} {request.url.path} "
                 f"client={client_ip}"
                 f"{' params=' + str(query_params) if query_params else ''}")

@@ -307,7 +307,7 @@ python generate_access_password.py
 | 配置项 | 说明 |
 |--------|------|
 | `enable_https` | 启用 HTTPS。 |
-| `verify_client` | 要求客户端证书（mTLS 双向认证）。 |
+| `verify_client` | 要求客户端证书（mTLS 双向认证）。未设置或设置为除字面量 `false` 以外的任何值时，默认要求证书；只有 `server.conf` 中显式写明 `verify_client=false` 才会关闭校验。 |
 | `ssl_certfile` | 服务器证书路径。 |
 | `ssl_keyfile` | 服务器私钥路径（加密存储）。 |
 | `ssl_ca_certs` | CA 信任库，用于校验客户端证书。 |
@@ -332,7 +332,8 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 2. 修改 `etc/conf/server.conf`：
    ```ini
    enable_https=true
-   verify_client=false          # 设为 true 启用 mTLS（需客户端证书）
+   verify_client=true           # mTLS：要求客户端出示证书。仅在你清楚这会让
+                                 # 外部 API（见下文）完全没有认证保护时才设为 false
    agent_registry_url=https://127.0.0.1:5000   # 如果注册中心也用了 HTTPS
    ```
 
@@ -349,6 +350,8 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 ### 外部 API 保护
 
 外部 API（`/api/v1/*`）在 `enable_https=true` 且 `verify_client=true` 时受 mTLS 保护。客户端必须在 TLS 握手阶段出示有效证书，无需应用层额外检查。
+
+**使用默认的 `enable_https=false` 时，外部 API 完全没有保护**——既没有 mTLS（根本不存在 TLS 层），也没有应用层检查（`auth_middleware` 按设计只保护内部 API `/rest/v1/orchestrate/*`）。网络可达的任何请求方都能调用它。除本地开发外，不要在没有反向代理、防火墙或网络策略保护的情况下暴露默认（HTTP）部署；一旦启用 HTTPS，除非你另有应用层认证机制，否则应保持 `verify_client` 处于安全默认值（`true`）。
 
 ### 认证接口
 
@@ -368,7 +371,7 @@ python generate_selfsign_cert.py etc/ssl serverAuth
 |----------|------|
 | `etc/conf/server.conf` | 服务 IP、端口、TLS 证书、持久化模式、注册中心 URL, access password |
 | `etc/conf/server.properties` | TLS 版本、密码套件、流控参数、连接限制, client_verify_server |
-| `etc/conf/db_config.json` | PostgreSQL 连接配置 |
+| `etc/conf/db_config.json` | PostgreSQL 连接配置——已加入 .gitignore；复制 `etc/conf/db_config.json.template` 作为起点（仅 `persistence_mode=postgresql` 时需要） |
 | `common/config/llm_config.json` | LLM/Embedding/Rerank 模型端点（可通过 `LLM_*` 覆盖，见下文） |
 | `.env` | 本地覆盖配置 — 已加入 gitignore。协商 SDK 也直接从这里读取 `A2AT_*` 变量（见下文） |
 | `common/config/README_zh.md` | LLM 配置指南 |

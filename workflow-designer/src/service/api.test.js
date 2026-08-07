@@ -37,7 +37,16 @@ import {
   matchWorkflows,
   getExecutionRecords,
   getExecutionRecord,
-  deleteExecutionRecord
+  deleteExecutionRecord,
+  getAuthToken,
+  setAuthToken,
+  authCheck,
+  login,
+  logout,
+  register,
+  listUsers,
+  deleteUser,
+  changePassword
 } from './api';
 
 // Mock axios
@@ -402,6 +411,166 @@ describe('api service', () => {
       const url2 = getStartProcessStreamUrl('psop-456', 'test intent with spaces');
       expect(url2).toContain('/rest/v1/orchestrate/execute?psop_id=psop-456');
       expect(url2).toContain('user_intent=');
+    });
+  });
+
+  // Regression coverage for #16: this file previously had zero tests for
+  // login/register/changePassword or the two axios interceptors, despite
+  // #9 (9a) changing exactly what these functions send over the wire.
+  describe('Access authentication', () => {
+    // Interceptors are registered once, at module import time -- before any
+    // beforeEach in this suite runs and calls vi.clearAllMocks(). Capture
+    // the real callbacks here, during test collection, not inside an it().
+    const mockApi = axios.create();
+    const requestInterceptor = mockApi.interceptors.request.use.mock.calls[0][0];
+    const [responseSuccessInterceptor, responseErrorInterceptor] = mockApi.interceptors.response.use.mock.calls[0];
+
+    describe('token storage', () => {
+      it('getAuthToken reads what setAuthToken wrote', () => {
+        setAuthToken('my-token');
+        expect(getAuthToken()).toBe('my-token');
+      });
+
+      it('setAuthToken(null) clears the stored token', () => {
+        setAuthToken('my-token');
+        setAuthToken(null);
+        expect(getAuthToken()).toBeNull();
+      });
+    });
+
+    describe('request interceptor', () => {
+      it('injects Authorization when a token is stored', () => {
+        setAuthToken('my-token');
+        const config = requestInterceptor({ headers: {} });
+        expect(config.headers.Authorization).toBe('Bearer my-token');
+      });
+
+      it('leaves Authorization unset when no token is stored', () => {
+        setAuthToken(null);
+        const config = requestInterceptor({ headers: {} });
+        expect(config.headers.Authorization).toBeUndefined();
+      });
+    });
+
+    describe('response interceptor', () => {
+      it('unwraps response.data on success', () => {
+        const result = responseSuccessInterceptor({ data: { status: 'success' } });
+        expect(result).toEqual({ status: 'success' });
+      });
+
+      it('clears the token and dispatches auth-expired on a 401', async () => {
+        setAuthToken('my-token');
+        const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+        const error = { response: { status: 401 } };
+
+        await expect(responseErrorInterceptor(error)).rejects.toBe(error);
+        expect(getAuthToken()).toBeNull();
+        expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'auth-expired' }));
+        dispatchSpy.mockRestore();
+      });
+
+      it('leaves the token alone on a non-401 error', async () => {
+        setAuthToken('my-token');
+        const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+        const error = { response: { status: 500 } };
+
+        await expect(responseErrorInterceptor(error)).rejects.toBe(error);
+        expect(getAuthToken()).toBe('my-token');
+        expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'auth-expired' }));
+        dispatchSpy.mockRestore();
+      });
+
+      it('leaves the token alone on a network error with no response', async () => {
+        const error = {};
+        await expect(responseErrorInterceptor(error)).rejects.toBe(error);
+        // Must not throw on error.response being undefined.
+      });
+    });
+
+    describe('login/register/changePassword send plaintext (regression for #9)', () => {
+      it('login sends the password as-is, not a SHA-256 digest of it', async () => {
+        mockApi.post.mockResolvedValue({ data: { token: 'abc123', username: 'alice', role: 'user' } });
+
+        await login('alice', 'MyRealPassword1!');
+        expect(mockApi.post).toHaveBeenCalledWith(
+          expect.stringContaining('/auth/login'),
+          { username: 'alice', password: 'MyRealPassword1!' }
+        );
+      });
+
+      it('login stores the returned token', async () => {
+        mockApi.post.mockResolvedValue({ data: { token: 'abc123', username: 'alice', role: 'user' } });
+
+        await login('alice', 'MyRealPassword1!');
+        expect(getAuthToken()).toBe('abc123');
+      });
+
+      it('login does not store a token when auth is disabled', async () => {
+        mockApi.post.mockResolvedValue({ data: { auth_required: false, token: null } });
+
+        setAuthToken(null);
+        await login('alice', 'anything');
+        expect(getAuthToken()).toBeNull();
+      });
+
+      it('register sends the password as-is, not a SHA-256 digest of it', async () => {
+        mockApi.post.mockResolvedValue({ data: { username: 'alice' } });
+
+        await register('alice', 'MyRealPassword1!');
+        expect(mockApi.post).toHaveBeenCalledWith(
+          expect.stringContaining('/auth/register'),
+          { username: 'alice', password: 'MyRealPassword1!' }
+        );
+      });
+
+      it('changePassword sends both passwords as-is, not SHA-256 digests', async () => {
+        mockApi.post.mockResolvedValue({ data: {} });
+
+        await changePassword('OldPassword1!', 'NewPassword1!');
+        expect(mockApi.post).toHaveBeenCalledWith(
+          expect.stringContaining('/auth/change-password'),
+          { old_password: 'OldPassword1!', new_password: 'NewPassword1!' }
+        );
+      });
+    });
+
+    describe('other auth endpoints', () => {
+      it('authCheck calls GET /auth/check', async () => {
+        mockApi.get.mockResolvedValue({ data: { authenticated: false } });
+        const result = await authCheck();
+        expect(mockApi.get).toHaveBeenCalledWith(expect.stringContaining('/auth/check'));
+        expect(result).toEqual({ authenticated: false });
+      });
+
+      it('logout posts to /auth/logout and clears the token', async () => {
+        setAuthToken('my-token');
+        mockApi.post.mockResolvedValue({ data: {} });
+
+        await logout();
+        expect(mockApi.post).toHaveBeenCalledWith(expect.stringContaining('/auth/logout'));
+        expect(getAuthToken()).toBeNull();
+      });
+
+      it('logout clears the token even if the request fails', async () => {
+        setAuthToken('my-token');
+        mockApi.post.mockRejectedValue(new Error('network error'));
+
+        await expect(logout()).rejects.toThrow('network error');
+        expect(getAuthToken()).toBeNull();
+      });
+
+      it('listUsers calls GET /auth/users', async () => {
+        mockApi.get.mockResolvedValue({ data: [{ username: 'alice' }] });
+        const result = await listUsers();
+        expect(mockApi.get).toHaveBeenCalledWith(expect.stringContaining('/auth/users'));
+        expect(result).toEqual([{ username: 'alice' }]);
+      });
+
+      it('deleteUser calls DELETE /auth/users/{username}', async () => {
+        mockApi.delete.mockResolvedValue({ data: {} });
+        await deleteUser('alice');
+        expect(mockApi.delete).toHaveBeenCalledWith(expect.stringContaining('/auth/users/alice'));
+      });
     });
   });
 });

@@ -30,12 +30,31 @@ reset.
 
 import hashlib
 import secrets as _secrets
+import threading
 from typing import Optional
 
 from loguru import logger
 
 from database.utils.db_connection import create_connection
 from database.utils.query_execution import execute_query
+
+# has_any_user() gates is_auth_enabled() (orchestrate/server/auth.py),
+# which runs on every /rest/v1/orchestrate/* request -- an unpooled DB
+# round trip there is a self-inflicted amplification an unauthenticated
+# request flood can exploit (see #40). Once any user exists it can never
+# stop existing (delete_user() refuses to delete "admin"), so a True
+# result is cached for the process lifetime; only the "not yet seeded"
+# window before the first user still queries the database.
+_any_user_exists_cache = False
+_any_user_exists_lock = threading.Lock()
+
+
+def _mark_user_exists() -> None:
+    global _any_user_exists_cache
+    if not _any_user_exists_cache:
+        with _any_user_exists_lock:
+            _any_user_exists_cache = True
+
 
 # Current on-disk password scheme: password_hash = _hash_password(plaintext, salt).
 # 'legacy' rows instead hold _hash_password(sha256(plaintext), salt) -- the
@@ -72,6 +91,7 @@ def create_user(username: str, password: str, role: str = "user", must_change_pa
             logger.warning(f"Failed to create user '{username}': {err}")
             return False
         logger.info(f"User '{username}' created with role '{role}'")
+        _mark_user_exists()
         return True
     finally:
         conn.close()
@@ -202,13 +222,23 @@ def delete_user(username: str) -> bool:
 
 
 def has_any_user() -> bool:
-    """Check if any user exists in the database."""
+    """Check if any user exists in the database.
+
+    Cached once True (see the module-level note above) -- callers on a
+    hot path (is_auth_enabled()) skip the DB round trip entirely once at
+    least one user has ever been observed to exist.
+    """
+    if _any_user_exists_cache:
+        return True
     conn = create_connection()
     if conn is None:
         return False
     try:
         result, err = execute_query(conn, "SELECT 1 FROM users LIMIT 1", None)
-        return bool(result and not err)
+        found = bool(result and not err)
+        if found:
+            _mark_user_exists()
+        return found
     finally:
         conn.close()
 
