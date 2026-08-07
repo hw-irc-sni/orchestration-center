@@ -25,6 +25,21 @@ export default ({ mode }) => defineConfig({
     base: '/',
     server: {
         port: 3003,
+        // Only reached by a client defaulted (or explicitly set) to gateway
+        // mode -- e.g. `npm run dev -- --host` on a LAN, where the page
+        // isn't loaded from localhost (see getBaseUrl()/shouldDefaultToGateway
+        // in src/service/api.js). Mirrors nginx.conf.template's
+        // /api/orchestrate/ location: strip the prefix, forward to the
+        // backend root. BACKEND_URL/BACKEND_INSECURE let this point at a
+        // remote or HTTPS (self-signed) backend without editing this file.
+        proxy: {
+            '/api/orchestrate': {
+                target: process.env.BACKEND_URL || 'http://127.0.0.1:5001',
+                changeOrigin: true,
+                secure: process.env.BACKEND_INSECURE !== 'true',
+                rewrite: (path) => path.replace(/^\/api\/orchestrate/, ''),
+            },
+        },
     },
     plugins: [
         react(),
@@ -42,6 +57,9 @@ export default ({ mode }) => defineConfig({
         },
     },
     assetsInclude: ["**/*.PNG"],
+    test: {
+        environment: 'jsdom',
+    },
     build: {
         minify: 'esbuild',
         rollupOptions: {

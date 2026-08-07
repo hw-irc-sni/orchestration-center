@@ -93,13 +93,13 @@ describe('api service', () => {
     });
 
     it('should return custom URL when localStorage has config', () => {
-      mockLocalStorage.setItem('server_config', JSON.stringify({ ip: '192.168.1.1', port: '8080' }));
+      mockLocalStorage.setItem('server_config', JSON.stringify({ mode: 'ip', ip: '192.168.1.1', port: '8080' }));
       const url = getBaseUrl();
       expect(url).toBe('http://192.168.1.1:8080');
     });
 
     it('should return default IP if port is missing in config', () => {
-      mockLocalStorage.setItem('server_config', JSON.stringify({ ip: '192.168.1.1' }));
+      mockLocalStorage.setItem('server_config', JSON.stringify({ mode: 'ip', ip: '192.168.1.1' }));
       const url = getBaseUrl();
       expect(url).toBe(`http://192.168.1.1:${defaultPort}`);
     });
@@ -231,30 +231,28 @@ describe('api service', () => {
     });
   });
 
-  describe('Direct axios requests', () => {
+  describe('More api instance requests', () => {
     it('parsePdf should handle successful response', async () => {
+      const mockApi = axios.create();
       const mockFile = new File([''], 'test.pdf', { type: 'application/pdf' });
       const mockContent = { key: 'value' };
-      axios.post.mockResolvedValue({
-        data: { status: 'success', data: mockContent }
-      });
+      mockApi.post.mockResolvedValue({ status: 'success', data: mockContent });
 
       const result = await parsePdf(mockFile);
       expect(result).toEqual({ key: 'value' });
-      expect(axios.post).toHaveBeenCalledWith(
+      // No explicit Content-Type: passing a FormData body lets axios generate
+      // the multipart boundary itself. A manually-set header without one
+      // would break multipart parsing server-side.
+      expect(mockApi.post).toHaveBeenCalledWith(
         expect.stringContaining('/rest/v1/orchestrate/parse-pdf'),
-        expect.any(FormData),
-        expect.objectContaining({
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
+        expect.any(FormData)
       );
     });
 
     it('parsePdf should throw error when status is not success', async () => {
+      const mockApi = axios.create();
       const mockFile = new File([''], 'test.pdf', { type: 'application/pdf' });
-      axios.post.mockResolvedValue({
-        data: { status: 'error', message: 'Parse failed' }
-      });
+      mockApi.post.mockResolvedValue({ status: 'error', message: 'Parse failed' });
 
       await expect(parsePdf(mockFile)).rejects.toThrow('Parse failed');
     });
@@ -303,49 +301,44 @@ describe('api service', () => {
     });
 
     it('handlePlan should handle successful response', async () => {
+      const mockApi = axios.create();
       const preflow = {};
       const agentCards = [];
       const mockData = { plan: 'test' };
-      axios.post.mockResolvedValue({
-        data: { status: 'success', data: mockData }
-      });
+      mockApi.post.mockResolvedValue({ status: 'success', data: mockData });
 
       const result = await handlePlan(preflow, agentCards);
       expect(result).toEqual({ plan: 'test' });
-      expect(axios.post).toHaveBeenCalledWith(
+      expect(mockApi.post).toHaveBeenCalledWith(
         expect.stringContaining('/rest/v1/orchestrate/generate-from-preflow'),
         { preflow, agent_cards: agentCards }
       );
     });
 
     it('handlePlan should throw error when status is not success', async () => {
-      axios.post.mockResolvedValue({
-        data: { status: 'error', message: 'Plan failed' }
-      });
+      const mockApi = axios.create();
+      mockApi.post.mockResolvedValue({ status: 'error', message: 'Plan failed' });
 
       await expect(handlePlan({}, [])).rejects.toThrow('Plan failed');
     });
 
     it('generateWorkflowFromIntent should handle successful response', async () => {
+      const mockApi = axios.create();
       const intent = 'test intent';
       const mockWorkflow = { id: 1 };
-      axios.post.mockResolvedValue({
-        status: 200,
-        data: { status: 'success', data: mockWorkflow }
-      });
+      mockApi.post.mockResolvedValue({ status: 'success', data: mockWorkflow });
 
       const result = await generateWorkflowFromIntent(intent);
       expect(result).toEqual(mockWorkflow);
-      expect(axios.post).toHaveBeenCalledWith(
+      expect(mockApi.post).toHaveBeenCalledWith(
         expect.stringContaining('/rest/v1/orchestrate/generate-from-intent'),
         { user_intent: intent, workflow_name: "Generated Workflow" }
       );
     });
 
     it('generateWorkflowFromIntent should throw error when response indicates failure', async () => {
-      axios.post.mockResolvedValue({
-        data: { status: 'error', message: 'Generation failed' }
-      });
+      const mockApi = axios.create();
+      mockApi.post.mockResolvedValue({ status: 'error', message: 'Generation failed' });
 
       await expect(generateWorkflowFromIntent('intent')).rejects.toThrow('Generation failed');
     });
@@ -369,19 +362,17 @@ describe('api service', () => {
       );
     });
 
-    it('matchWorkflows should call axios.post and return parsed results', async () => {
+    it('matchWorkflows should call api.post and return parsed results', async () => {
+      const mockApi = axios.create();
       const intent = 'energy saving';
-      axios.post.mockResolvedValue({
-        status: 200,
-        data: {
-          status: 'success',
-          data: [{ id: 'wf1', name: 'ES Workflow', description: 'desc', tags: ['RAN'] }]
-        }
+      mockApi.post.mockResolvedValue({
+        status: 'success',
+        data: [{ id: 'wf1', name: 'ES Workflow', description: 'desc', tags: ['RAN'] }]
       });
 
       const result = await matchWorkflows(intent);
       expect(result).toEqual([{ workflow_id: 'wf1', name: 'ES Workflow', description: 'desc', tags: ['RAN'] }]);
-      expect(axios.post).toHaveBeenCalledWith(
+      expect(mockApi.post).toHaveBeenCalledWith(
         expect.stringContaining('/rest/v1/orchestrate/retrieve-by-intent'),
         { user_intent: intent }
       );

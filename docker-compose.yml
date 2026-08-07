@@ -48,6 +48,11 @@ services:
     environment:
       - BACKEND_HOST=orchestration-center
       - BACKEND_PORT=${ORCH_PORT:-5001}
+      # Keep in sync with ORCH_ENABLE_HTTPS above -- nginx's proxy_pass needs
+      # to know the backend's scheme independently (compose can't derive one
+      # from the other without a shell). Set BACKEND_SCHEME=https alongside
+      # ORCH_ENABLE_HTTPS=true.
+      - BACKEND_SCHEME=${BACKEND_SCHEME:-http}
     depends_on:
       - orchestration-center
     networks:

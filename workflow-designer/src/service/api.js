@@ -131,13 +131,24 @@ export async function importTemplate(templateId) {
     return api.post(`${ORCHESTRATE_BASE()}/templates/${templateId}/import`);
 }
 
+// Backend envelope is {code, message, status, data} (see response_utils.py). A
+// non-2xx response already rejects via axios; this catches the "200 OK but
+// status: error" case so callers relying on try/catch (e.g. the PDF import
+// flow) actually see a rejection instead of silently getting `undefined`.
+function unwrapEnvelope(body) {
+    if (body.status === 'error') {
+        throw new Error(body.message || 'Request failed');
+    }
+    return body.data;
+}
+
 // ──── PDF Parsing ────
 
 export async function parsePdf(file) {
     const formData = new FormData();
     formData.append('file', file);
     const body = await api.post(`${ORCHESTRATE_BASE()}/parse-pdf`, formData);
-    return body.data;
+    return unwrapEnvelope(body);
 }
 
 // ──── BPMN Parsing ────
@@ -157,7 +168,7 @@ export async function handlePlan(preflow, agentCards) {
         preflow: preflow,
         agent_cards: agentCards
     });
-    return body.data;
+    return unwrapEnvelope(body);
 }
 
 export async function generateWorkflowFromIntent(intent, name = "Generated Workflow") {
@@ -165,7 +176,7 @@ export async function generateWorkflowFromIntent(intent, name = "Generated Workf
         user_intent: intent,
         workflow_name: name
     });
-    return body.data || body;
+    return unwrapEnvelope(body) || body;
 }
 
 export async function matchWorkflows(intent) {

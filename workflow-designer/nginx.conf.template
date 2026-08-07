@@ -17,8 +17,8 @@
 #
 # Rendered to /etc/nginx/conf.d/default.conf at container start by nginx's
 # built-in envsubst-on-templates entrypoint (nginx:1.19+ images look under
-# /etc/nginx/templates/*.template). BACKEND_HOST/BACKEND_PORT come from the
-# container environment — see docker-compose.yml.
+# /etc/nginx/templates/*.template). BACKEND_HOST/BACKEND_PORT/BACKEND_SCHEME
+# come from the container environment — see docker-compose.yml.
 
 server {
     listen 80;
@@ -38,12 +38,17 @@ server {
     # the backend's root, where the internal API is mounted at
     # /rest/v1/orchestrate/*.
     location /api/orchestrate/ {
-        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT}/;
+        proxy_pass ${BACKEND_SCHEME}://${BACKEND_HOST}:${BACKEND_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # No-op when BACKEND_SCHEME=http. When https, the backend's default is
+        # a self-signed cert (see orchestrate/start.py) — nginx's proxy_pass
+        # otherwise refuses to complete the TLS handshake.
+        proxy_ssl_verify off;
 
         # SSE execution stream (see DynamicWorkflowEngine) — disable
         # buffering and give it room to stay open past nginx's default
