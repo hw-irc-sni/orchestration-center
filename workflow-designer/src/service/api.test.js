@@ -258,44 +258,35 @@ describe('api service', () => {
     });
 
     it('parseBpmn should handle successful response', async () => {
+      const mockApi = axios.create();
       const mockFile = new File([''], 'test.bpmn', { type: 'application/xml' });
       const mockContent = { key: 'value' };
-      axios.post.mockResolvedValue({
-        data: { status: 'success', data: mockContent }
-      });
+      mockApi.post.mockResolvedValue({ status: 'success', data: mockContent });
 
       const result = await parseBpmn(mockFile);
       expect(result).toEqual({ key: 'value' });
-      expect(axios.post).toHaveBeenCalledWith(
+      expect(mockApi.post).toHaveBeenCalledWith(
         expect.stringContaining('/rest/v1/orchestrate/parse-bpmn'),
-        expect.any(FormData),
-        expect.objectContaining({
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
+        expect.any(FormData)
       );
     });
 
     it('parseBpmn should append process_id as a query param when provided', async () => {
+      const mockApi = axios.create();
       const mockFile = new File([''], 'test.bpmn', { type: 'application/xml' });
-      axios.post.mockResolvedValue({
-        data: { status: 'success', data: {} }
-      });
+      mockApi.post.mockResolvedValue({ status: 'success', data: {} });
 
       await parseBpmn(mockFile, 'process-1');
-      expect(axios.post).toHaveBeenCalledWith(
+      expect(mockApi.post).toHaveBeenCalledWith(
         expect.stringContaining('/rest/v1/orchestrate/parse-bpmn?process_id=process-1'),
-        expect.any(FormData),
-        expect.objectContaining({
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
+        expect.any(FormData)
       );
     });
 
     it('parseBpmn should throw error when status is not success', async () => {
+      const mockApi = axios.create();
       const mockFile = new File([''], 'test.bpmn', { type: 'application/xml' });
-      axios.post.mockResolvedValue({
-        data: { status: 'error', message: 'Parse failed' }
-      });
+      mockApi.post.mockResolvedValue({ status: 'error', message: 'Parse failed' });
 
       await expect(parseBpmn(mockFile)).rejects.toThrow('Parse failed');
     });

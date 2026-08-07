@@ -158,7 +158,7 @@ export async function parseBpmn(file, processId) {
     formData.append('file', file);
     const query = processId ? `?process_id=${encodeURIComponent(processId)}` : '';
     const body = await api.post(`${ORCHESTRATE_BASE()}/parse-bpmn${query}`, formData);
-    return body.data;
+    return unwrapEnvelope(body);
 }
 
 // ──── Workflow Generation ────
