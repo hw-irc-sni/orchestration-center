@@ -173,11 +173,23 @@ class WorkbenchControlPoint(ControlPoint):
         if predecessor_data:
             return predecessor_data
         receive_msg = receive_result.get("message", "") if isinstance(receive_result, dict) else ""
+        original_task = ""
+        if isinstance(receive_result, dict):
+            for key, value in receive_result.items():
+                if "Task-T" in str(key) and isinstance(value, str) and len(value) > 20:
+                    original_task = value
+                    break
+            if not original_task:
+                original_task = receive_result.get("negotiationConcern", "") or ""
+        workflow_intent = ""
+        if self._sdk_workflow and hasattr(self._sdk_workflow, "user_intent"):
+            workflow_intent = self._sdk_workflow.user_intent or ""
         clarification = await self._generate_clarification(
             agent_name=agent_name,
-            original_task="",
+            original_task=original_task,
             negotiation_text=negotiation_text,
             receive_message=receive_msg,
+            workflow_intent=workflow_intent,
         )
         return clarification or ""
 
@@ -392,7 +404,8 @@ Produce a clear, structured analysis based on the context above. {lang_hint}"""
         return "\n\n".join(parts)
 
     async def _generate_clarification(self, agent_name: str, original_task: str,
-                                       negotiation_text: str, receive_message: str) -> str:
+                                       negotiation_text: str, receive_message: str,
+                                       workflow_intent: str = "") -> str:
         if not self.llm_client:
             return (
                 "Engine received your negotiation request and has reviewed the execution "
@@ -400,37 +413,53 @@ Produce a clear, structured analysis based on the context above. {lang_hint}"""
                 "above. If you have specific questions, state them clearly."
             )
         workflow_context = self._build_merge_context()
-        lang_hint = "Respond in Chinese." if self.lang == "zh" else "Respond in English."
-        prompt = f"""# Role
-You are the workbench agent's negotiation handler. An agent expressed uncertainty
-or confusion about a task you assigned. Based on the completed workflow execution
-context below, provide an accurate clarification or supplementary explanation.
+        current_step_info = ""
+        if self._current_step and self._sdk_workflow:
+            for s in self._sdk_workflow.steps:
+                if s.name == self._current_step and s.subtasks:
+                    for sub in s.subtasks:
+                        current_step_info += f"步骤: {s.name}, 任务描述: {sub.description or ''}, 目标Agent: {sub.agent or ''}\n"
+        lang_hint = "请用中文回复。" if self.lang == "zh" else "Respond in English."
+        prompt = f"""# 角色
+你是工作台的协商处理器。一个执行Agent在收到任务后发起了协商，明确列出了它缺少的数据字段。
+你的任务是：**针对Agent列出的每一个缺失字段，逐个补充具体的模拟数据**。
 
-# Important Constraints
-- You may ONLY base your answer on the actual outputs in the "Executed Workflow Context" below.
-  **Do NOT fabricate or speculate about facts that have not occurred.**
-- If the context is insufficient to answer the agent's concern, tell the agent directly:
-  "Insufficient information available. Please do your best with what you have."
-- Be concise and focused on the specific concern the agent raised.
+# 核心要求
+- **必须逐个字段回复**，Agent说缺什么你就补什么，一一对应
+- 每个字段给出具体数值，不要反问、不要说"请提供"
+- 数据要符合电信SPN专线运维的真实场景，数值合理
+- 如果Agent的"已提供"部分已有某些信息，不要重复生成
 
-# Executed Workflow Context (completed steps and their outputs)
-{workflow_context}
+# 工作流场景
+{workflow_intent or "(未提供)"}
 
-# Current Agent
+# 已完成步骤的执行结果
+{workflow_context or "(当前是第一个步骤，尚无已完成的前置步骤)"}
+
+# 当前步骤信息
+{current_step_info or "(未提供)"}
+
+# 当前Agent
 {agent_name}
 
-# Original Task
-{original_task or "(see request message)"}
+# 原始任务描述
+{original_task or "(未提供)"}
 
-# Agent's Negotiation Request (the concern or question)
+# Agent的协商请求（已提供 + 缺少字段列表）
 {negotiation_text}
 
-# Supplementary Notes
+# 补充说明
 {receive_message}
 
-# Task
-Based on the execution context above, provide a clear clarification to the agent.
-Do NOT add any prefix markers like "Clarification:". {lang_hint}"""
+# 输出格式
+请按以下格式输出，针对Agent"缺少"列表中的每一项逐条补充：
+
+## 补充数据
+- **字段名**: 具体值
+- **字段名**: 具体值
+...
+
+直接输出补充数据，不要添加其他前缀。{lang_hint}"""
         try:
             t0 = time.time()
             logger.info(f"[Workbench] Negotiation clarification for '{agent_name}': calling LLM...")

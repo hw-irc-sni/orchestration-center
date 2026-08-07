@@ -155,12 +155,11 @@ def main():
     is_enable_https = str(is_https).lower() == 'true'
     if server_config.get('persistence_mode', 'file').lower() != 'file':
         create_tables()
-        # Seed default admin user if users table is empty.
-        # The password stored is the SHA-256 hash, matching what the frontend sends.
-        import hashlib
-        default_pw_hash = hashlib.sha256(b"OpenAN@2026").hexdigest()
-        if seed_admin_if_empty(default_pw_hash):
-            logger.info("Default admin user created (password: OpenAN@2026)")
+        # Seed default admin user if users table is empty. user_store now
+        # hashes the real plaintext password server-side (see #9), so this
+        # is passed as-is rather than pre-hashed.
+        if seed_admin_if_empty("OpenAN@2026"):
+            logger.info("Default admin user 'admin' created; a password change is required on first login")
         else:
             logger.info("Users already exist, skipping admin seed")
     if not is_enable_https:

@@ -270,15 +270,8 @@ export async function authCheck() {
     return resp.data;
 }
  
-async function sha256(text) {
-    const data = new TextEncoder().encode(text);
-    const hash = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 export async function login(username, password) {
-    const hashed = await sha256(password);
-    const body = await api.post(`${ORCHESTRATE_BASE()}/auth/login`, { username, password: hashed });
+    const body = await api.post(`${ORCHESTRATE_BASE()}/auth/login`, { username, password });
     if (body.data && body.data.token) {
          setAuthToken(body.data.token);
      }
@@ -294,8 +287,7 @@ export async function logout() {
 }
  
 export async function register(username, password) {
-    const hashed = await sha256(password);
-    const body = await api.post(`${ORCHESTRATE_BASE()}/auth/register`, { username, password: hashed });
+    const body = await api.post(`${ORCHESTRATE_BASE()}/auth/register`, { username, password });
     return body.data;
 }
  
@@ -309,10 +301,8 @@ export async function deleteUser(username) {
 }
 
 export async function changePassword(oldPassword, newPassword) {
-    const oldHash = await sha256(oldPassword);
-    const newHash = await sha256(newPassword);
     return api.post(`${ORCHESTRATE_BASE()}/auth/change-password`, {
-        old_password: oldHash,
-        new_password: newHash,
+        old_password: oldPassword,
+        new_password: newPassword,
     });
 }

@@ -31,7 +31,7 @@ import secrets
 import threading
 import time
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from loguru import logger
 from starlette import status
 from starlette.responses import JSONResponse
@@ -80,22 +80,35 @@ def _get_ttl() -> int:
 
 
 class _SessionStore:
-    """Thread-safe in-memory token store with TTL."""
+    """Thread-safe in-memory token store with TTL.
+
+    Single-process only (see #14): a token minted by one worker/replica
+    isn't visible to another, and every restart drops all sessions. Fine
+    for the single-process launch paths this project ships today; revisit
+    with a shared backend (DB/Redis) before ever running multiple workers
+    or replicas. See the "Session storage is single-process only" note in
+    README.md for the operator-facing version of this.
+    """
 
     def __init__(self):
-        # token -> (username, expiry epoch)
-        self._tokens: dict[str, tuple[str, float]] = {}
+        # token -> (username, role, expiry epoch)
+        self._tokens: dict[str, tuple[str, str, float]] = {}
         self._lock = threading.Lock()
 
-    def create(self, username: str) -> tuple[str, int]:
-        """Create a new session token for the given user."""
+    def create(self, username: str, role: str = "user") -> tuple[str, int]:
+        """Create a new session token for the given user and role.
+
+        ``role`` is stamped once at login rather than re-resolved per
+        request, so admin-only checks don't add a DB lookup to every
+        authenticated request.
+        """
         token = secrets.token_urlsafe(32)
         ttl = _get_ttl()
         expiry = time.time() + ttl
         with self._lock:
             self._cleanup_locked()
-            self._tokens[token] = (username, expiry)
-        logger.info(f"Session token created for user '{username}', expires in {ttl}s")
+            self._tokens[token] = (username, role, expiry)
+        logger.info(f"Session token created for user '{username}' (role={role}), expires in {ttl}s")
         return token, ttl
 
     def validate(self, token: str) -> bool:
@@ -107,7 +120,7 @@ class _SessionStore:
             entry = self._tokens.get(token)
             if entry is None:
                 return False
-            if now >= entry[1]:
+            if now >= entry[2]:
                 del self._tokens[token]
                 return False
             return True
@@ -119,10 +132,22 @@ class _SessionStore:
         now = time.time()
         with self._lock:
             entry = self._tokens.get(token)
-            if entry is None or now >= entry[1]:
+            if entry is None or now >= entry[2]:
                 self._tokens.pop(token, None)
                 return None
             return entry[0]
+
+    def get_role(self, token: str) -> str | None:
+        """Return the role associated with the token, or None."""
+        if not token:
+            return None
+        now = time.time()
+        with self._lock:
+            entry = self._tokens.get(token)
+            if entry is None or now >= entry[2]:
+                self._tokens.pop(token, None)
+                return None
+            return entry[1]
 
     def revoke(self, token: str) -> None:
         with self._lock:
@@ -131,7 +156,7 @@ class _SessionStore:
     def _cleanup_locked(self) -> None:
         """Remove expired tokens (caller must hold the lock)."""
         now = time.time()
-        expired = [t for t, (_, exp) in self._tokens.items() if now >= exp]
+        expired = [t for t, (_, _, exp) in self._tokens.items() if now >= exp]
         for t in expired:
             del self._tokens[t]
 
@@ -150,6 +175,55 @@ def _extract_token(request: Request) -> str | None:
     if auth_header.startswith("Bearer "):
         return auth_header[7:].strip()
     return request.query_params.get("access_token")
+
+
+def require_admin(request: Request) -> None:
+    """FastAPI dependency: reject the request unless the session role is 'admin'.
+
+    No-op when auth is disabled: ``auth_middleware`` already lets every
+    request through in that mode, so re-checking here would just lock
+    everyone out of a deployment that has authentication turned off.
+    """
+    if not is_auth_enabled():
+        return
+    token = _extract_token(request)
+    role = _session_store.get_role(token) if token else None
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+
+# Usernames that must change their password before anything else is allowed.
+# Populated at login from the DB (see #12) rather than re-queried per
+# request, matching the session-role pattern -- avoids a DB round trip on
+# every authenticated request. Self-healing across restarts: the set is
+# empty on startup, but the next login for a still-pending user repopulates
+# it from the DB's own must_change_password column.
+_pending_password_change: set[str] = set()
+_pending_password_change_lock = threading.Lock()
+
+# Authenticated paths that must stay reachable for a user stuck in the
+# forced-change state, or they'd have no way to actually clear it.
+_PASSWORD_CHANGE_EXEMPT_PATHS = {
+    "/rest/v1/orchestrate/auth/change-password",
+    "/rest/v1/orchestrate/auth/logout",
+}
+
+
+def mark_must_change_password(username: str) -> None:
+    with _pending_password_change_lock:
+        _pending_password_change.add(username)
+
+
+def clear_must_change_password(username: str) -> None:
+    with _pending_password_change_lock:
+        _pending_password_change.discard(username)
+
+
+def username_must_change_password(username: str | None) -> bool:
+    if not username:
+        return False
+    with _pending_password_change_lock:
+        return username in _pending_password_change
 
 
 async def auth_middleware(request: Request, call_next):
@@ -184,6 +258,13 @@ async def auth_middleware(request: Request, call_next):
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content=error(401, "Unauthorized: valid token required"),
+        )
+
+    username = _session_store.get_username(token)
+    if username_must_change_password(username) and path not in _PASSWORD_CHANGE_EXEMPT_PATHS:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=error(403, "Password change required", data={"must_change_password": True}),
         )
 
     return await call_next(request)

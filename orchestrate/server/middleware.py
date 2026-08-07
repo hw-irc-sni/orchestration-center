@@ -28,6 +28,7 @@ from common.config import (
     FLOW_CTL_PARSE_PDF, FLOW_CTL_PARSE_BPMN, FLOW_CTL_PLAN, FLOW_CTL_ALL_PSOPS, FLOW_CTL_ONE_PSOP,
     FLOW_CTL_SAVE_PSOP, FLOW_CTL_DELETE_PSOP, FLOW_CTL_AGENT_CARDS,
     FLOW_CTL_GENERATE_PSOP, FLOW_CTL_RETRIEVE_PSOP, FLOW_CTL_START_PROCESS_STREAM,
+    FLOW_CTL_LOGIN,
 )
 from common.util.config_util import get_conf
 
@@ -157,6 +158,35 @@ class RateLimiter:
         self.rate_item = parse_rate_limit(interface_name, config)
         if not self.rate_item:
             raise ValueError("Invalid rate limit configuration")
+
+    async def __call__(self, request: Request):
+        identifier = request.client.host if request.client else "unknown"
+        if not await async_hit(self.rate_item, identifier):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+        return True
+
+
+class LoginRateLimiter:
+    """Per-minute rate limit for /auth/login, keyed by client IP.
+
+    RateLimiter's X/second granularity (50/second by default) is far too
+    permissive for a credential-guessing endpoint -- it would still allow
+    thousands of login attempts per minute. Login is throttled by minute
+    instead, sharing the same moving-window limiter/storage as RateLimiter.
+    """
+
+    _DEFAULT_PER_MINUTE = 5
+
+    def __init__(self, config):
+        try:
+            rate_value = int(config.get(FLOW_CTL_LOGIN, self._DEFAULT_PER_MINUTE))
+        except (ValueError, TypeError):
+            logger.error(f"Config key '{FLOW_CTL_LOGIN}' has invalid value, using default {self._DEFAULT_PER_MINUTE}")
+            rate_value = self._DEFAULT_PER_MINUTE
+        items = parse_many(f"{rate_value}/minute")
+        if not items:
+            raise ValueError("Invalid rate limit configuration")
+        self.rate_item = items[0]
 
     async def __call__(self, request: Request):
         identifier = request.client.host if request.client else "unknown"

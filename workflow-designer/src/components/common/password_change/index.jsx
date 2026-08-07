@@ -19,7 +19,7 @@ import {useTranslation} from "react-i18next";
 import {Lock, X, Save, AlertCircle, Loader2, KeyRound} from "lucide-react";
 import {changePassword} from "@/service/api.js";
 
-const PasswordChangeModal = ({isOpen, onClose, t}) => {
+const PasswordChangeModal = ({isOpen, onClose, t, forced = false}) => {
     const [oldPassword, setOldPassword] = useState("");
     const [newPassword, setNewPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
@@ -67,11 +67,19 @@ const PasswordChangeModal = ({isOpen, onClose, t}) => {
                         </div>
                         <h2 className={"text-lg font-black dark:text-white"}>{t('login.change_password')}</h2>
                     </div>
-                    <button className={"p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full transition-colors"} onClick={onClose}>
-                        <X size={20} className={"text-zinc-400"}/>
-                    </button>
+                    {!forced && (
+                        <button className={"p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full transition-colors"} onClick={onClose}>
+                            <X size={20} className={"text-zinc-400"}/>
+                        </button>
+                    )}
                 </div>
                 <form onSubmit={handleSubmit} className={"p-8 space-y-5"}>
+                    {forced && (
+                        <div className={"flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 rounded-xl p-3"}>
+                            <AlertCircle size={16} className={"shrink-0"}/>
+                            <span>{t('login.must_change_password')}</span>
+                        </div>
+                    )}
                     <div className={"space-y-2"}>
                         <label className={"text-[10px] font-black text-zinc-400 ml-1"}>{t('login.current_password')}</label>
                         <div className={"relative"}>
@@ -116,10 +124,12 @@ const PasswordChangeModal = ({isOpen, onClose, t}) => {
                         </div>
                     )}
                     <div className={"flex gap-3 pt-2"}>
-                        <button type={"button"} onClick={onClose}
-                                className={"flex-1 py-3 rounded-xl font-black text-xs text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all"}>
-                            {t('common.cancel')}
-                        </button>
+                        {!forced && (
+                            <button type={"button"} onClick={onClose}
+                                    className={"flex-1 py-3 rounded-xl font-black text-xs text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all"}>
+                                {t('common.cancel')}
+                            </button>
+                        )}
                         <button type={"submit"} disabled={loading}
                                 className={"flex-1 py-3 rounded-xl text-xs bg-blue-600 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2"}>
                             {loading ? (<><Loader2 size={16} className="animate-spin"/> {t('login.loading')}</>) : (<><Save size={16}/> {t('login.change_password')}</>)}

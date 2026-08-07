@@ -26,7 +26,8 @@
     "password_complexity": "Password must contain uppercase, lowercase, and a number",
     "change_password": "Change Password",
     "current_password": "Current Password",
-    "new_password": "New Password"
+    "new_password": "New Password",
+    "must_change_password": "This account is using a default password. Choose a new password to continue."
   },
   "execution": {
     "title": "Execution Center",

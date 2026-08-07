@@ -31,7 +31,7 @@ const {t, i18n} = useTranslation();
         try {
            const data = await login(username, password);
            if (data && data.token) {
-                onLoginWithUser ? onLoginWithUser(data.username) : onLoginSuccess();
+                onLoginWithUser ? onLoginWithUser(data.username, data.must_change_password) : onLoginSuccess();
            } else if (data && data.auth_required === false) {
                onLoginSuccess();
            }
@@ -64,8 +64,8 @@ const {t, i18n} = useTranslation();
             await register(username, password);
             const data = await login(username, password);
            if (data && data.token) {
-                onLoginWithUser ? onLoginWithUser(data.username) : onLoginSuccess();
-            } 
+                onLoginWithUser ? onLoginWithUser(data.username, data.must_change_password) : onLoginSuccess();
+            }
        } catch (err) {
             const msg = err?.response?.data?.message || err?.message || "";
             setError(msg || t('login.error'));

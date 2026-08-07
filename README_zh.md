@@ -277,10 +277,10 @@ flowchart TB
 内部 API（`/rest/v1/orchestrate/*`）受令牌认证保护。根据 `persistence_mode` 支持两种模式：
 
 **数据库模式（`persistence_mode=postgresql`）**：
-- 用户存储在 PostgreSQL `users` 表中，密码使用 SHA-256 + 每用户独立 salt 哈希。
+- 明文密码发送到后端（需经由 TLS，见下文），由后端使用 SHA-256 + 每用户独立 salt 哈希；服务器不再持久化或比对由客户端计算出的哈希值。
 - 首次启动自动创建默认 `admin` 用户（密码：`OpenAN@2026`）。
 - 新用户可通过登录页的注册链接自行注册。
-- 密码要求至少 8 位，包含大写字母、小写字母和数字。
+- 密码要求至少 8 位，且至少包含以下两类字符：数字、大写字母、小写字母、特殊字符。该策略在服务端强制校验（`common/util/password_util.validate_password_complexity`），而不仅仅是前端界面提示。
 
 **文件模式（`persistence_mode=file`）**：
 - 通过 `server.conf` 的 `access_password` 配置单一密码。
@@ -293,7 +293,9 @@ flowchart TB
 | `access_token_ttl` | 会话令牌有效期（秒）。 | `43200`（12小时） |
 | `persistence_mode` | `postgresql` 启用数据库用户管理；`file` 使用配置密码认证。 | `file` |
 
-前端使用 `crypto.subtle` 对密码做 SHA-256 哈希后发送。令牌存储在内存中，通过 `Authorization: Bearer` 请求头或 `access_token` 查询参数（用于 SSE/EventSource）传递。
+前端按原样发送密码；由后端负责哈希（数据库模式下按用户加盐哈希；文件模式下与配置的 SHA-256 值比对）。**这依赖 `enable_https=true` 来保证传输过程的机密性**——见下方 TLS/HTTPS 一节；除本地开发外，不要使用默认的 `enable_https=false`。令牌存储在内存中，通过 `Authorization: Bearer` 请求头或 `access_token` 查询参数（用于 SSE/EventSource）传递。
+
+> **会话存储仅限单进程。** 令牌保存在运行中 Python 进程的内存字典中。若以多个 `uvicorn` worker 运行，或在负载均衡后部署多个副本，会间歇性地拒绝本应有效的令牌——因为某个 worker 签发的令牌对其他 worker 不可见。每次进程重启也会导致所有活动会话登出（鉴于令牌本身有 TTL，这本身无害，但仍需提前预期）。当前内置的两条启动路径（`orchestrate/start.py`）都是单进程运行，因此默认情况下不会触发此问题——但如果之后需要多 worker 或多副本部署，必须先将会话存储迁移到共享后端（例如现有的 PostgreSQL 数据库，或 Redis）。
 
 生成密码哈希（file 模式）：
 ```bash

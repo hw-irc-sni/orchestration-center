@@ -51,8 +51,23 @@ def create_tables():
                             password_hash VARCHAR(128) NOT NULL,
                             salt          VARCHAR(64) NOT NULL,
                             role          VARCHAR(16) DEFAULT 'user',
+                            must_change_password BOOLEAN DEFAULT FALSE,
+                            password_scheme VARCHAR(16) DEFAULT 'legacy',
                             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                        )
+                       """
+    # CREATE TABLE IF NOT EXISTS above does not alter an existing table, so
+    # installs that already have a `users` table from before these columns
+    # existed need an explicit migration. Existing rows correctly default
+    # password_scheme to 'legacy' -- see user_store.authenticate_user() for
+    # what that means.
+    migrate_users_must_change_password_sql = """
+                       ALTER TABLE users
+                       ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE
+                       """
+    migrate_users_password_scheme_sql = """
+                       ALTER TABLE users
+                       ADD COLUMN IF NOT EXISTS password_scheme VARCHAR(16) DEFAULT 'legacy'
                        """
     conn = create_connection()
     if conn is None:
@@ -67,6 +82,12 @@ def create_tables():
         _, err3 = execute_query(conn, create_users_sql)
         if err3:
             raise RuntimeError(f"Failed to create users table: {err3}")
+        _, err4 = execute_query(conn, migrate_users_must_change_password_sql)
+        if err4:
+            raise RuntimeError(f"Failed to migrate users table (must_change_password): {err4}")
+        _, err5 = execute_query(conn, migrate_users_password_scheme_sql)
+        if err5:
+            raise RuntimeError(f"Failed to migrate users table (password_scheme): {err5}")
         logger.info("Database tables verified/created: psop, execution_records, users")
     finally:
         conn.close()

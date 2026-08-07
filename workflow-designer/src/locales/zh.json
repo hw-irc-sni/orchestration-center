@@ -26,7 +26,8 @@
     "password_complexity": "密码必须包含大写字母、小写字母和数字",
     "change_password": "修改密码",
     "current_password": "当前密码",
-    "new_password": "新密码"
+    "new_password": "新密码",
+    "must_change_password": "该账户正在使用默认密码，请设置新密码后继续。"
   },
   "execution": {
     "title": "工作流执行",

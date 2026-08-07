@@ -16,8 +16,10 @@
 #    under the License.
 
 import os
+import hashlib
 import secrets
 import tempfile
+import threading
 import json
 import re
 import pathlib
@@ -58,7 +60,7 @@ from orchestrate.server.external_api import router as external_router
 from orchestrate.core.psop_generator import PsopGenerator
 from orchestrate.core.intent_psop_generator import IntentPsopGenerator
 from orchestrate.core.workflow_search_result import WorkflowSearchResult
-from orchestrate.server.middleware import ConnectionLimitMiddleware, TimeoutMiddleware, RateLimiter
+from orchestrate.server.middleware import ConnectionLimitMiddleware, TimeoutMiddleware, RateLimiter, LoginRateLimiter
 from orchestrate.server.shared_handlers import SharedHandlers
 from orchestrate.solution_package.parse_flow import SolutionPackageParser
 from orchestrate.bpmn_flows.parse_bpmn import BPMNFlowParser, BPMNParsingError, BPMNProcessNotFoundError
@@ -66,6 +68,10 @@ from orchestrate.server.auth import (
     is_auth_enabled,
     get_session_store,
     auth_middleware,
+    require_admin,
+    mark_must_change_password,
+    clear_must_change_password,
+    username_must_change_password,
 )
 
 app = FastAPI(title="Workflow Orchestration API", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
@@ -191,14 +197,14 @@ router = APIRouter(prefix="/rest/v1/orchestrate")
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=64, description="Username")
-    password: str = Field(..., min_length=1, max_length=256, description="Password (SHA-256 hashed by frontend)")
+    password: str = Field(..., min_length=1, max_length=256, description="Password (plaintext, sent over TLS)")
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64, description="Username")
-    password: str = Field(..., min_length=6, max_length=256, description="Password (SHA-256 hashed by frontend)")
+    password: str = Field(..., min_length=8, max_length=256, description="Password (plaintext, sent over TLS)")
 
 @router.post("/auth/login")
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, _: Any = Depends(LoginRateLimiter(config))):
     if not is_auth_enabled():
         return ok(data={"auth_required": False, "token": None}, message="Authentication disabled")
     conf = get_conf()
@@ -207,15 +213,28 @@ async def login(request: LoginRequest):
         from database.utils.user_store import authenticate_user
         user = authenticate_user(request.username, request.password)
         if user is not None:
-            token, ttl = get_session_store().create(user["username"])
+            role = user.get("role", "user")
+            must_change = user.get("must_change_password", False)
+            if must_change:
+                mark_must_change_password(user["username"])
+            else:
+                clear_must_change_password(user["username"])
+            token, ttl = get_session_store().create(user["username"], role)
             logger.info(f"Login successful (DB): {user['username']}")
-            return ok(data={"auth_required": True, "token": token, "expires_in": ttl, "username": user["username"], "role": user.get("role", "user")})
+            return ok(data={
+                "auth_required": True, "token": token, "expires_in": ttl,
+                "username": user["username"], "role": role,
+                "must_change_password": must_change,
+            })
         logger.warning(f"Login failed: username={request.username}")
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    # File mode: config-based auth
+    # File mode: config-based auth. access_password stores sha256(plaintext)
+    # (see generate_access_password.py); hash the incoming plaintext the
+    # same way before comparing.
     stored = conf.get("access_password", "")
-    if request.username == "admin" and stored and secrets.compare_digest(request.password, stored):
-        token, ttl = get_session_store().create("admin")
+    computed = hashlib.sha256(request.password.encode()).hexdigest()
+    if request.username == "admin" and stored and secrets.compare_digest(computed, stored):
+        token, ttl = get_session_store().create("admin", "admin")
         logger.info("Login successful (config): admin")
         return ok(data={"auth_required": True, "token": token, "expires_in": ttl, "username": "admin", "role": "admin"})
     logger.warning(f"Login failed: username={request.username}")
@@ -228,6 +247,10 @@ async def register(request: RegisterRequest):
         raise HTTPException(status_code=400, detail="Registration requires PostgreSQL persistence mode")
     if not re.fullmatch(r"^[a-zA-Z][a-zA-Z0-9_-]{2,63}$", request.username):
         raise HTTPException(status_code=400, detail="Username must start with a letter and contain only letters, digits, underscores or hyphens (3-64 chars)")
+    from common.util.password_util import validate_password_complexity
+    is_valid, reason = validate_password_complexity(request.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Password does not meet complexity requirements: {reason}")
     from database.utils.user_store import create_user, user_exists
     if user_exists(request.username):
         raise HTTPException(status_code=409, detail="Username already exists")
@@ -254,16 +277,20 @@ async def auth_check(request: Request):
     token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
     if token and get_session_store().validate(token):
         username = get_session_store().get_username(token)
-        return ok(data={"auth_required": True, "authenticated": True, "username": username, "registration_enabled": registration_enabled})
+        return ok(data={
+            "auth_required": True, "authenticated": True, "username": username,
+            "registration_enabled": registration_enabled,
+            "must_change_password": username_must_change_password(username),
+        })
     return ok(data={"auth_required": True, "authenticated": False, "registration_enabled": registration_enabled})
 
 @router.get("/auth/users")
-async def list_users_endpoint():
+async def list_users_endpoint(_: Any = Depends(require_admin)):
     from database.utils.user_store import list_users
     return ok(data=list_users())
 
 @router.delete("/auth/users/{username}")
-async def delete_user_endpoint(username: str):
+async def delete_user_endpoint(username: str, _: Any = Depends(require_admin)):
     if username == "admin":
         raise HTTPException(status_code=403, detail="Cannot delete admin user")
     from database.utils.user_store import delete_user
@@ -274,8 +301,40 @@ async def delete_user_endpoint(username: str):
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str = Field(..., min_length=1, max_length=256, description="Current password (SHA-256 hashed)")
-    new_password: str = Field(..., min_length=6, max_length=256, description="New password (SHA-256 hashed)")
+    old_password: str = Field(..., min_length=1, max_length=256, description="Current password (plaintext, sent over TLS)")
+    new_password: str = Field(..., min_length=8, max_length=256, description="New password (plaintext, sent over TLS)")
+
+# Serializes file-mode password changes and makes the server.conf rewrite
+# below atomic (temp file + os.replace instead of truncate-in-place), so a
+# crash or full disk mid-write can never leave a truncated config file.
+_password_file_lock = threading.Lock()
+
+
+def _update_access_password_in_conf(conf_path: str, new_password: str) -> bool:
+    """Rewrite the access_password= line in server.conf. Returns False (no
+    write performed) if the key isn't present in the file."""
+    with _password_file_lock:
+        with open(conf_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        updated = False
+        for i, line in enumerate(lines):
+            if line.strip().startswith("access_password="):
+                lines[i] = f"access_password={new_password}\n"
+                updated = True
+                break
+        if not updated:
+            return False
+        conf_dir = os.path.dirname(conf_path)
+        fd, tmp_path = tempfile.mkstemp(dir=conf_dir, prefix=".server.conf.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            os.replace(tmp_path, conf_path)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
+        get_conf.cache_clear()
+        return True
 
 @router.post("/auth/change-password")
 async def change_password(request: ChangePasswordRequest, http_request: Request):
@@ -288,38 +347,37 @@ async def change_password(request: ChangePasswordRequest, http_request: Request)
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if is_db_mode:
+        from common.util.password_util import validate_password_complexity
+        is_valid, reason = validate_password_complexity(request.new_password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=f"Password does not meet complexity requirements: {reason}")
         from database.utils.user_store import authenticate_user, update_password
         # Verify old password
         user = authenticate_user(username, request.old_password)
         if user is None:
             raise HTTPException(status_code=401, detail="Current password is incorrect")
         if update_password(username, request.new_password):
+            clear_must_change_password(username)
             logger.info(f"Password changed for user '{username}'")
             return ok(message="Password changed successfully")
         raise HTTPException(status_code=500, detail="Failed to change password")
-    # File mode: update access_password in server.conf
+    # File mode: update access_password in server.conf. Stored value is
+    # sha256(plaintext) (see generate_access_password.py); hash both the
+    # incoming old and new plaintext passwords the same way.
     stored = conf.get("access_password", "")
-    if not secrets.compare_digest(request.old_password, stored):
+    old_computed = hashlib.sha256(request.old_password.encode()).hexdigest()
+    if not secrets.compare_digest(old_computed, stored):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
-    # Write new password hash to server.conf
+    new_computed = hashlib.sha256(request.new_password.encode()).hexdigest()
     conf_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "etc", "conf", "server.conf")
-    if os.path.exists(conf_path):
-        with open(conf_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        updated = False
-        for i, line in enumerate(lines):
-            if line.strip().startswith("access_password="):
-                lines[i] = f"access_password={request.new_password}\n"
-                updated = True
-                break
-        if updated:
-            with open(conf_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-            # Invalidate the config cache
-            get_conf.cache_clear()
-            logger.info("Password changed (file mode): access_password updated in server.conf")
-            return ok(message="Password changed successfully")
-    raise HTTPException(status_code=500, detail="Failed to change password")
+    if not os.path.exists(conf_path):
+        logger.error(f"Cannot change password: {conf_path} does not exist")
+        raise HTTPException(status_code=500, detail="server.conf not found")
+    if _update_access_password_in_conf(conf_path, new_computed):
+        logger.info("Password changed (file mode): access_password updated in server.conf")
+        return ok(message="Password changed successfully")
+    logger.error(f"Cannot change password: no access_password key in {conf_path}")
+    raise HTTPException(status_code=500, detail="access_password key not found in server.conf")
 
 # Workflow CRUD
 # ═══════════════════════════════════════════════════════════════════════════════

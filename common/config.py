@@ -55,3 +55,7 @@ FLOW_CTL_PARALLEL_RETRIEVE_PSOP = "flowcontrol.parallelism.retrieve_psop"
 
 FLOW_CTL_START_PROCESS_STREAM = "flowcontrol.ratelimit.start_process_stream"
 FLOW_CTL_PARALLEL_START_PROCESS_STREAM = "flowcontrol.parallelism.start_process_stream"
+
+# Login has no parallelism counterpart: it's throttled per-minute per client,
+# not capped on concurrency like the endpoints above.
+FLOW_CTL_LOGIN = "flowcontrol.ratelimit.login"

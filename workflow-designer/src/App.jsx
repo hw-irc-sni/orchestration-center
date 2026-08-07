@@ -18,6 +18,7 @@ import {useTranslation} from "react-i18next";
 import {useEffect, useState} from "react";
 import Header from "@/components/common/header/index.jsx";
 import Login from "@/components/common/login/index.jsx";
+import PasswordChangeModal from "@/components/common/password_change/index.jsx";
 import {authCheck, setAuthToken} from "@/service/api.js";
 import AgentRegistry from "./components/registry_center/index.jsx";
 import OrchestrationCenter from "@/components/orchestration_center/index.jsx";
@@ -32,6 +33,7 @@ const MainContainer = () => {
    const [authRequired, setAuthRequired] = useState(false);
    const [registrationEnabled, setRegistrationEnabled] = useState(false);
    const [currentUser, setCurrentUser] = useState(null);
+   const [mustChangePassword, setMustChangePassword] = useState(false);
 
    const [isDark, setIsDark] = useState(() => {
         const savedTheme = localStorage.getItem('theme');
@@ -45,6 +47,7 @@ const MainContainer = () => {
                    setAuthRequired(data.auth_required !== false);
                    setRegistrationEnabled(data.registration_enabled || false);
                    setCurrentUser(data.username || null);
+                   setMustChangePassword(!!data.must_change_password);
                    setAuthState('authenticated');
                } else {
                    setAuthRequired(true);
@@ -65,6 +68,7 @@ const MainContainer = () => {
        setAuthToken(null);
        setAuthState('unauthenticated');
        setCurrentUser(null);
+       setMustChangePassword(false);
    };
 
    const [activeTab, setActiveTab] = useState(() => {
@@ -110,11 +114,19 @@ const MainContainer = () => {
            <Login
                isDark={isDark}
                onLoginSuccess={() => setAuthState('authenticated')}
-               onLoginWithUser={(user) => { setCurrentUser(user); setAuthState('authenticated'); }}
+               onLoginWithUser={(user, mustChange) => { setCurrentUser(user); setMustChangePassword(!!mustChange); setAuthState('authenticated'); }}
                registrationEnabled={registrationEnabled}
            />
         ) : (
         <div className="h-screen flex flex-col bg-zinc-50 dark:bg-[#09090B] overflow-hidden font-sans text-lg transition-colors duration-500">
+           {mustChangePassword && (
+               <PasswordChangeModal
+                   isOpen={true}
+                   forced={true}
+                   onClose={() => {}}
+                   t={t}
+               />
+           )}
            <Header
                currentTab={activeTab}
                onTabChange={setActiveTab}

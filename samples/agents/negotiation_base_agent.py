@@ -241,12 +241,14 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
         # Mirrors Java handleNewTask: if negotiation is needed, request it
         # WITHOUT executing the business. Business runs on the follow-up.
         if self.needs_negotiation(user_input):
-            logger.info(f"[{self.__class__.__name__}] needs_negotiation=True, requesting negotiation")
+            concern = self.generate_negotiation_concern(user_input)
+            logger.info(f"[{self.__class__.__name__}] needs_negotiation=True, concern={concern}")
             metadata = build_negotiation_response_metadata(
                 negotiation_context_data=negotiation_context_data,
                 negotiation_text=negotiation_text,
-                negotiation_concern="needs clarification",
+                negotiation_concern=concern,
             )
+            request_text = f"收到诊断任务，但当前信息不足以完成诊断。具体分析如下：\n\n{concern}\n\n请补充以上缺少的信息后，我将重新执行诊断。"
             return Task(
                 id=context.task_id,
                 context_id=context.context_id,
@@ -254,7 +256,7 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
                 artifacts=[
                     Artifact(
                         artifact_id=str(uuid.uuid4()),
-                        parts=[Part(text=f"{NEGOTIATION_REQUEST_MARKER} {self.__class__.__name__} needs more information to complete this task.")]
+                        parts=[Part(text=request_text)]
                     )
                 ],
                 metadata=metadata
@@ -316,6 +318,47 @@ class NegotiationBaseAgentExecutor(AgentExecutor):
         return True when the agent needs clarification.
         """
         return False
+
+    def generate_negotiation_concern(self, user_input: str) -> str:
+        """Generate a specific negotiation concern listing exactly which fields are missing.
+
+        Uses LLM to analyze the task input, identify what data was provided vs
+        what is still needed, and return a structured list of missing fields.
+        """
+        prompt = (
+            f"你是一个SPN专线故障诊断智能体。你收到了以下诊断任务请求：\n\n"
+            f"---\n{user_input[:800]}\n---\n\n"
+            f"请分析这个任务请求：\n"
+            f"1. **已提供的信息**：任务中明确给出的所有内容，包括场景名称、任务类型、业务背景等\n"
+            f"2. **缺少的关键数据**：要完成故障诊断还需要的具体数据字段\n\n"
+            f"故障诊断通常需要以下具体数据（仅列出任务中**没有给出具体值**的字段）：\n"
+            f"- 客户名称/专线电路编号\n"
+            f"- 故障端口编号和端口状态\n"
+            f"- 光功率值（收光/发光）和正常阈值\n"
+            f"- 告警类型和告警时间\n"
+            f"- 故障现象描述（如中断、丢包、时延等）\n"
+            f"- 对端设备和端口信息\n\n"
+            f"请按以下格式回复：\n"
+            f"已提供：逐条列出任务中已有的信息（如场景名称、任务类型等，至少有一条）\n"
+            f"缺少：逐条列出缺少的具体数据字段，每条一行\n\n"
+            f"只输出分析结果，不要有其他内容。"
+        )
+        try:
+            _, concern = self.llm.ask_llm(prompt)
+            if concern and len(concern.strip()) > 10:
+                return concern.strip()
+        except Exception as e:
+            logger.warning(f"[{self.__class__.__name__}] LLM concern generation failed: {e}")
+        return (
+            "已提供：SPN跨城专线故障诊断场景\n"
+            "缺少：\n"
+            "- 客户名称/专线电路编号\n"
+            "- 故障端口编号\n"
+            "- 端口状态（Up/Down）\n"
+            "- 光功率值及正常阈值\n"
+            "- 告警类型\n"
+            "- 故障现象描述"
+        )
 
     def _execute_task(self, user_input: str, task_id: str = None, context_id: str = None) -> str:
         prompt = self.prompt_template.format(task=user_input)

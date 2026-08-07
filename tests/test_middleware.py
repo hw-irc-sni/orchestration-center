@@ -21,7 +21,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from orchestrate.server.middleware import (
-    parse_rate_limit, RateLimiter, async_hit,
+    parse_rate_limit, RateLimiter, LoginRateLimiter, async_hit,
     ConnectionLimitMiddleware, TimeoutMiddleware
 )
 from fastapi import Request, HTTPException
@@ -84,6 +84,57 @@ class TestRateLimiter:
         with patch('orchestrate.server.middleware.parse_rate_limit', return_value=None):
             with pytest.raises(ValueError, match="Invalid rate limit configuration"):
                 RateLimiter({}, "nonexistent")
+
+
+class TestLoginRateLimiter:
+    """Regression coverage for #8: /auth/login has its own, much stricter,
+    per-minute rate limit instead of RateLimiter's X/second granularity."""
+
+    def _make_request(self, host="127.0.0.1"):
+        mock_request = MagicMock(spec=Request)
+        mock_request.client.host = host
+        return mock_request
+
+    def test_default_rate_is_five_per_minute(self):
+        limiter = LoginRateLimiter({})
+        assert str(limiter.rate_item) == "5 per 1 minute"
+
+    def test_uses_configured_value(self):
+        limiter = LoginRateLimiter({"flowcontrol.ratelimit.login": "3"})
+        assert str(limiter.rate_item) == "3 per 1 minute"
+
+    def test_uses_default_when_config_invalid(self):
+        limiter = LoginRateLimiter({"flowcontrol.ratelimit.login": "not_a_number"})
+        assert str(limiter.rate_item) == "5 per 1 minute"
+
+    @pytest.mark.anyio
+    async def test_allows_within_limit(self):
+        limiter = LoginRateLimiter({"flowcontrol.ratelimit.login": "5"})
+        request = self._make_request(host="203.0.113.1")
+        for _ in range(5):
+            assert await limiter(request) is True
+
+    @pytest.mark.anyio
+    async def test_rejects_once_limit_exceeded(self):
+        limiter = LoginRateLimiter({"flowcontrol.ratelimit.login": "2"})
+        request = self._make_request(host="203.0.113.2")
+        assert await limiter(request) is True
+        assert await limiter(request) is True
+        with pytest.raises(HTTPException) as exc_info:
+            await limiter(request)
+        assert exc_info.value.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+    @pytest.mark.anyio
+    async def test_limit_is_per_client(self):
+        limiter = LoginRateLimiter({"flowcontrol.ratelimit.login": "1"})
+        assert await limiter(self._make_request(host="203.0.113.3")) is True
+        # A different client IP has its own, unaffected budget.
+        assert await limiter(self._make_request(host="203.0.113.4")) is True
+
+    def test_raises_for_unparseable_rate_string(self):
+        with patch('orchestrate.server.middleware.parse_many', return_value=[]):
+            with pytest.raises(ValueError, match="Invalid rate limit configuration"):
+                LoginRateLimiter({})
 
 
 @pytest.mark.anyio

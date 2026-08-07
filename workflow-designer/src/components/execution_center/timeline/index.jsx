@@ -1,4 +1,6 @@
 import React, { useMemo, useState, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
     CheckCircle2,
     XCircle,
@@ -109,9 +111,20 @@ function groupEventsByStep(events) {
             case 'route_decision':
                 step.route = event.data;
                 break;
+            case 'task_response':
+                if (event.data?.output && stepName) {
+                    const taskDesc = event.data.task || '';
+                    const existing = step.output && typeof step.output === 'object' ? step.output : {};
+                    existing[taskDesc || 'output'] = event.data.output;
+                    step.output = existing;
+                }
+                break;
             case 'step_complete':
                 step.status = 'completed';
                 step.endTime = event.timestamp;
+                if (event.data?.results && !step.output) {
+                    step.output = event.data.results;
+                }
                 break;
             case 'error':
                 step.status = 'failed';
@@ -158,43 +171,42 @@ function formatDuration(startTime, endTime) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
- * MarkdownRenderer (lightweight inline version)
+ * MarkdownRenderer (react-markdown + remark-gfm)
  * ────────────────────────────────────────────────────────────────── */
+
+const mdComponents = {
+    h1: ({ children }) => <h1 className="text-lg font-bold text-zinc-800 dark:text-zinc-100 mt-4 mb-2">{children}</h1>,
+    h2: ({ children }) => <h2 className="text-base font-bold text-zinc-800 dark:text-zinc-100 mt-4 mb-2">{children}</h2>,
+    h3: ({ children }) => <h3 className="text-sm font-bold text-zinc-700 dark:text-zinc-200 mt-3 mb-1">{children}</h3>,
+    p: ({ children }) => <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed mb-1">{children}</p>,
+    ul: ({ children }) => <ul className="list-disc pl-5 space-y-1 my-2">{children}</ul>,
+    ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1 my-2">{children}</ol>,
+    li: ({ children }) => <li className="text-xs text-zinc-600 dark:text-zinc-400">{children}</li>,
+    strong: ({ children }) => <strong className="font-bold text-zinc-800 dark:text-zinc-200">{children}</strong>,
+    em: ({ children }) => <em className="italic">{children}</em>,
+    code: ({ className, children }) => {
+        const isBlock = className?.includes('language-');
+        if (isBlock) return <code className="block bg-zinc-100 dark:bg-zinc-800 rounded p-2 text-[10px] font-mono text-zinc-700 dark:text-zinc-300 overflow-x-auto">{children}</code>;
+        return <code className="bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5 text-[10px] font-mono text-zinc-700 dark:text-zinc-300">{children}</code>;
+    },
+    pre: ({ children }) => <pre className="bg-zinc-100 dark:bg-zinc-800 rounded-lg p-3 my-2 overflow-x-auto">{children}</pre>,
+    table: ({ children }) => <table className="w-full text-[10px] border-collapse my-2">{children}</table>,
+    thead: ({ children }) => <thead className="bg-zinc-100 dark:bg-zinc-800">{children}</thead>,
+    th: ({ children }) => <th className="border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-left font-semibold text-zinc-700 dark:text-zinc-300">{children}</th>,
+    td: ({ children }) => <td className="border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-zinc-600 dark:text-zinc-400">{children}</td>,
+    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{children}</a>,
+    hr: () => <hr className="border-zinc-200 dark:border-zinc-700 my-3" />,
+    blockquote: ({ children }) => <blockquote className="border-l-3 border-zinc-300 dark:border-zinc-600 pl-3 my-2 text-zinc-500 dark:text-zinc-400 italic">{children}</blockquote>,
+};
 
 const MarkdownRenderer = React.memo(({ text }) => {
     if (!text) return null;
     const normalized = String(text).replace(/\\n/g, '\n');
-    const lines = normalized.split('\n');
-    const elements = [];
-    let elementKey = 0;
-    let i = 0;
-    while (i < lines.length) {
-        const line = lines[i];
-        if (!line.trim()) { i++; elements.push(<div key={`md-${elementKey++}`} className="h-3" />); continue; }
-        const h3 = line.match(/^###\s+(.+)/);
-        const h2 = line.match(/^##\s+(.+)/);
-        const h1 = line.match(/^#\s+(.+)/);
-        if (h3) { elements.push(<h3 key={`md-${elementKey++}`} className="text-sm font-bold text-zinc-700 dark:text-zinc-200 mt-3 mb-1">{h3[1]}</h3>); i++; continue; }
-        if (h2) { elements.push(<h2 key={`md-${elementKey++}`} className="text-base font-bold text-zinc-800 dark:text-zinc-100 mt-4 mb-2">{h2[1]}</h2>); i++; continue; }
-        if (h1) { elements.push(<h1 key={`md-${elementKey++}`} className="text-lg font-bold text-zinc-800 dark:text-zinc-100 mt-4 mb-2">{h1[1]}</h1>); i++; continue; }
-        const ul = line.match(/^[-*]\s+(.+)/);
-        if (ul) {
-            const items = [];
-            while (i < lines.length && lines[i].match(/^[-*]\s+(.+)/)) {
-                items.push(lines[i].replace(/^[-*]\s+/, ''));
-                i++;
-            }
-            elements.push(
-                <ul key={`md-${elementKey++}`} className="list-disc pl-5 space-y-1 my-2">
-                    {items.map((item, idx) => <li key={idx} className="text-xs text-zinc-600 dark:text-zinc-400">{item}</li>)}
-                </ul>
-            );
-            continue;
-        }
-        elements.push(<p key={`md-${elementKey++}`} className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">{line}</p>);
-        i++;
-    }
-    return <div>{elements}</div>;
+    return (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {normalized}
+        </ReactMarkdown>
+    );
 });
 
 /* ──────────────────────────────────────────────────────────────────
@@ -203,6 +215,7 @@ const MarkdownRenderer = React.memo(({ text }) => {
 
 const ProtocolCard = React.memo(({ direction, data, timestamp, isDark }) => {
     const [showMetadata, setShowMetadata] = useState(false);
+    const [expanded, setExpanded] = useState(false);
     if (!data) return null;
 
     const isRequest = direction === 'request';
@@ -227,11 +240,14 @@ const ProtocolCard = React.memo(({ direction, data, timestamp, isDark }) => {
 
     return (
         <div className={`rounded-lg border ${bgClass} overflow-hidden`}>
-            {/* Card Header */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-inherit bg-white/50 dark:bg-zinc-900/30">
+            {/* Card Header (clickable) */}
+            <div
+                className="flex items-center gap-2 px-3 py-2 border-b border-inherit bg-white/50 dark:bg-zinc-900/30 cursor-pointer select-none hover:bg-white/80 dark:hover:bg-zinc-900/50 transition-colors"
+                onClick={() => setExpanded(!expanded)}
+            >
                 {icon}
                 <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">{label}</span>
-                {ts && <span className="text-[10px] text-zinc-400 ml-auto font-mono">{ts}</span>}
+                {ts && <span className="text-[10px] text-zinc-400 font-mono">{ts}</span>}
                 {state && (
                     <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
                         state.includes('COMPLETED') ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
@@ -241,56 +257,64 @@ const ProtocolCard = React.memo(({ direction, data, timestamp, isDark }) => {
                         {state.replace('TASK_STATE_', '')}
                     </span>
                 )}
+                <span className="ml-auto text-zinc-400">
+                    {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </span>
             </div>
 
-            {/* A2A-T Headers */}
-            {(() => {
-                const headerKeys = Object.keys(metadata).filter(k => k.includes('tmforum.org') || k.includes('a2aproject'));
-                if (headerKeys.length === 0) return null;
-                return (
-                    <div className="px-3 py-2 border-b border-inherit bg-zinc-50/50 dark:bg-zinc-800/30">
-                        <div className="text-[9px] font-semibold text-zinc-500 dark:text-zinc-400 mb-1">A2A-Extensions</div>
-                        <div className="flex flex-wrap gap-1">
-                            {headerKeys.map((k, idx) => (
-                                <span key={idx} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300">
-                                    {k.split('/').pop()}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                );
-            })()}
-
-            {/* Body Content */}
-            {text && (
-                <div className="px-3 py-2 bg-white/60 dark:bg-zinc-900/40 max-h-48 overflow-y-auto custom-scrollbar">
-                    <MarkdownRenderer text={text} />
-                </div>
-            )}
-
-            {/* Metadata Toggle */}
-            {hasMetadata && (
-                <div className="px-3 py-2 border-t border-inherit bg-zinc-50/30 dark:bg-zinc-800/20">
-                    <button
-                        onClick={() => setShowMetadata(!showMetadata)}
-                        className="flex items-center gap-1 text-[10px] font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
-                    >
-                        {showMetadata ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                        Metadata ({Object.keys(metadata).length})
-                    </button>
-                    {showMetadata && (
-                        <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
-                            {Object.entries(metadata).map(([key, val], idx) => (
-                                <div key={idx} className="text-[10px]">
-                                    <span className="font-semibold text-zinc-600 dark:text-zinc-400 break-all">{key}:</span>
-                                    <div className="ml-2 mt-0.5">
-                                        <MarkdownRenderer text={typeof val === 'string' ? val : JSON.stringify(val, null, 2)} />
-                                    </div>
+            {/* Expandable Content */}
+            {expanded && (
+                <>
+                    {/* A2A-T Headers */}
+                    {(() => {
+                        const headerKeys = Object.keys(metadata).filter(k => k.includes('tmforum.org') || k.includes('a2aproject'));
+                        if (headerKeys.length === 0) return null;
+                        return (
+                            <div className="px-3 py-2 border-b border-inherit bg-zinc-50/50 dark:bg-zinc-800/30">
+                                <div className="text-[9px] font-semibold text-zinc-500 dark:text-zinc-400 mb-1">A2A-Extensions</div>
+                                <div className="flex flex-wrap gap-1">
+                                    {headerKeys.map((k, idx) => (
+                                        <span key={idx} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300">
+                                            {k.split('/').pop()}
+                                        </span>
+                                    ))}
                                 </div>
-                            ))}
+                            </div>
+                        );
+                    })()}
+
+                    {/* Body Content */}
+                    {text && (
+                        <div className="px-3 py-2 bg-white/60 dark:bg-zinc-900/40 overflow-y-auto custom-scrollbar">
+                            <MarkdownRenderer text={text} />
                         </div>
                     )}
-                </div>
+
+                    {/* Metadata Toggle */}
+                    {hasMetadata && (
+                        <div className="px-3 py-2 border-t border-inherit bg-zinc-50/30 dark:bg-zinc-800/20">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowMetadata(!showMetadata); }}
+                                className="flex items-center gap-1 text-[10px] font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
+                            >
+                                {showMetadata ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                                Metadata ({Object.keys(metadata).length})
+                            </button>
+                            {showMetadata && (
+                                <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto custom-scrollbar">
+                                    {Object.entries(metadata).map(([key, val], idx) => (
+                                        <div key={idx} className="text-[10px]">
+                                            <span className="font-semibold text-zinc-600 dark:text-zinc-400 break-all">{key}:</span>
+                                            <div className="ml-2 mt-0.5">
+                                                <MarkdownRenderer text={typeof val === 'string' ? val : JSON.stringify(val, null, 2)} />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </>
             )}
         </div>
     );
@@ -302,6 +326,7 @@ const ProtocolCard = React.memo(({ direction, data, timestamp, isDark }) => {
 
 const AgentInteraction = React.memo(({ interaction, isDark }) => {
     const agent = interaction.agent || 'Unknown';
+    const [negExpanded, setNegExpanded] = useState(false);
     return (
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-800/30 overflow-hidden">
             {/* Agent Header */}
@@ -322,18 +347,40 @@ const AgentInteraction = React.memo(({ interaction, isDark }) => {
                 )}
                 {interaction.negotiations && interaction.negotiations.length > 0 && (
                     <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 p-3">
-                        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400 mb-2">
+                        <div
+                            className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400 cursor-pointer select-none"
+                            onClick={() => setNegExpanded(!negExpanded)}
+                        >
                             <MessageSquare size={11} />
                             协商 ({interaction.negotiations.length} 轮)
+                            <span className="ml-auto text-amber-400">
+                                {negExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                            </span>
                         </div>
-                        <div className="space-y-1.5">
-                            {interaction.negotiations.map((neg, idx) => (
-                                <div key={idx} className="text-[10px] text-zinc-600 dark:text-zinc-400 pl-2 border-l-2 border-amber-300 dark:border-amber-700">
-                                    <span className="font-semibold">{neg.type.replace('negotiation_', '')}:</span>{' '}
-                                    {neg.data?.concern || neg.data?.clarification || neg.data?.reason || ''}
-                                </div>
-                            ))}
-                        </div>
+                        {negExpanded && (
+                            <div className="space-y-3 mt-2">
+                                {interaction.negotiations.map((neg, idx) => {
+                                    const label = neg.type.replace('negotiation_', '');
+                                    const content = neg.data?.concern || neg.data?.clarification || neg.data?.reason || '';
+                                    const labelColor = label === 'request' ? 'text-blue-600 dark:text-blue-400'
+                                        : label === 'resolved' ? 'text-emerald-600 dark:text-emerald-400'
+                                        : label === 'failed' ? 'text-rose-600 dark:text-rose-400'
+                                        : 'text-amber-600 dark:text-amber-400';
+                                    const borderColor = label === 'request' ? 'border-blue-300 dark:border-blue-700'
+                                        : label === 'resolved' ? 'border-emerald-300 dark:border-emerald-700'
+                                        : label === 'failed' ? 'border-rose-300 dark:border-rose-700'
+                                        : 'border-amber-300 dark:border-amber-700';
+                                    return (
+                                        <div key={idx} className={`pl-3 border-l-2 ${borderColor}`}>
+                                            <div className={`text-[10px] font-bold uppercase mb-1 ${labelColor}`}>{label}</div>
+                                            <div className="overflow-y-auto custom-scrollbar">
+                                                <MarkdownRenderer text={content} />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -345,27 +392,50 @@ const AgentInteraction = React.memo(({ interaction, isDark }) => {
  * SelfLoopCard (Phase 3.4)
  * ────────────────────────────────────────────────────────────────── */
 
-const SelfLoopCard = React.memo(({ step, isDark }) => (
-    <div className="flex flex-col gap-2 pl-3 border-l-2 border-purple-300 dark:border-purple-700 ml-2">
-        <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center shrink-0">
-                <RotateCcw size={12} className="text-white" />
+const SelfLoopCard = React.memo(({ step, isDark }) => {
+    const [expanded, setExpanded] = useState(false);
+    const renderOutput = () => {
+        if (!step.output) return null;
+        if (typeof step.output === 'string') {
+            return <MarkdownRenderer text={step.output} />;
+        }
+        return Object.entries(step.output).map(([taskDesc, output], idx) => (
+            <div key={idx} className="mb-3 last:mb-0">
+                <div className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 mb-1">{taskDesc}</div>
+                <MarkdownRenderer text={typeof output === 'string' ? output : JSON.stringify(output, null, 2)} />
             </div>
-            <span className="text-xs font-bold text-purple-600 dark:text-purple-400">Self-Loop (Local Processing)</span>
+        ));
+    };
+    return (
+        <div className="flex flex-col gap-2 pl-3 border-l-2 border-purple-300 dark:border-purple-700 ml-2">
+            <div
+                className="flex items-center gap-2 cursor-pointer select-none"
+                onClick={() => step.output && setExpanded(!expanded)}
+            >
+                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center shrink-0">
+                    <RotateCcw size={12} className="text-white" />
+                </div>
+                <span className="text-xs font-bold text-purple-600 dark:text-purple-400">Self-Loop (Local Processing)</span>
+                {step.output && (
+                    <span className="ml-auto text-purple-400">
+                        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </span>
+                )}
+            </div>
+            {expanded && step.output && (
+                <div className="rounded-lg bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900 p-3 overflow-y-auto custom-scrollbar">
+                    {renderOutput()}
+                </div>
+            )}
+            {step.status === 'running' && !step.output && (
+                <div className="flex items-center gap-2 text-xs text-purple-500">
+                    <Loader size={12} className="animate-spin" />
+                    <span>Processing...</span>
+                </div>
+            )}
         </div>
-        {step.output && (
-            <div className="rounded-lg bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900 p-2 max-h-32 overflow-y-auto custom-scrollbar">
-                <MarkdownRenderer text={typeof step.output === 'string' ? step.output : JSON.stringify(step.output)} />
-            </div>
-        )}
-        {step.status === 'running' && !step.output && (
-            <div className="flex items-center gap-2 text-xs text-purple-500">
-                <Loader size={12} className="animate-spin" />
-                <span>Processing...</span>
-            </div>
-        )}
-    </div>
-));
+    );
+});
 
 /* ──────────────────────────────────────────────────────────────────
  * RouteDecisionCard (Phase 3.6 inner)
@@ -394,16 +464,23 @@ const StepPhase = React.memo(({ step, isDark }) => {
     const statusInfo = StepStatusMap[step.status] || StepStatusMap.pending;
     const StatusIcon = statusInfo.icon;
     const duration = formatDuration(step.startTime, step.endTime);
+    const [collapsed, setCollapsed] = useState(step.status === 'completed');
+
+    const interactionCount = step.interactions.length;
+    const hasContent = step.isSelfLoop || interactionCount > 0 || step.route || step.output || step.error;
 
     return (
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/50 overflow-hidden">
-            {/* Step Header */}
-            <div className={`px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 ${
-                step.status === 'running' ? 'bg-blue-50/50 dark:bg-blue-950/20' :
-                step.status === 'completed' ? 'bg-emerald-50/30 dark:bg-emerald-950/10' :
-                step.status === 'failed' ? 'bg-rose-50/30 dark:bg-rose-950/10' :
-                'bg-zinc-50 dark:bg-zinc-800/30'
-            }`}>
+            {/* Step Header (clickable) */}
+            <div
+                className={`px-4 py-3 cursor-pointer select-none transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${
+                    step.status === 'running' ? 'bg-blue-50/50 dark:bg-blue-950/20' :
+                    step.status === 'completed' ? 'bg-emerald-50/30 dark:bg-emerald-950/10' :
+                    step.status === 'failed' ? 'bg-rose-50/30 dark:bg-rose-950/10' :
+                    'bg-zinc-50 dark:bg-zinc-800/30'
+                } ${!collapsed ? 'border-b border-zinc-100 dark:border-zinc-800' : ''}`}
+                onClick={() => hasContent && setCollapsed(!collapsed)}
+            >
                 <div className="flex items-center gap-2.5">
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
                         step.status === 'running' ? 'bg-blue-100 dark:bg-blue-900/40' :
@@ -427,40 +504,41 @@ const StepPhase = React.memo(({ step, isDark }) => {
                                 {step.status === 'running' ? '执行中' : step.status === 'completed' ? '已完成' : step.status === 'failed' ? '失败' : '等待中'}
                             </span>
                             {duration && <span className="text-[10px] text-zinc-400">· {duration}</span>}
+                            {interactionCount > 0 && <span className="text-[10px] text-zinc-400">· {interactionCount} 次交互</span>}
                         </div>
                     </div>
+                    {hasContent && (
+                        <div className="text-zinc-400 transition-transform duration-200">
+                            {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Step Content */}
-            <div className="p-4 space-y-3">
-                {step.isSelfLoop ? (
-                    <SelfLoopCard step={step} isDark={isDark} />
-                ) : (
-                    step.interactions.map((interaction, idx) => (
-                        <AgentInteraction key={idx} interaction={interaction} isDark={isDark} />
-                    ))
-                )}
-                {step.route && <RouteDecisionCard data={step.route} />}
-                {step.output && (
-                    <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 p-3">
-                        <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-1.5">输出结果</div>
-                        <div className="max-h-32 overflow-y-auto custom-scrollbar">
-                            <MarkdownRenderer text={typeof step.output === 'string' ? step.output : (step.output?.output || JSON.stringify(step.output))} />
+            {/* Step Content (collapsible) */}
+            {!collapsed && (
+                <div className="p-4 space-y-3">
+                    {step.isSelfLoop ? (
+                        <SelfLoopCard step={step} isDark={isDark} />
+                    ) : (
+                        step.interactions.map((interaction, idx) => (
+                            <AgentInteraction key={idx} interaction={interaction} isDark={isDark} />
+                        ))
+                    )}
+                    {step.route && <RouteDecisionCard data={step.route} />}
+
+                    {step.error && (
+                        <div className="rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 p-3">
+                            <div className="flex items-start gap-2">
+                                <XCircle size={14} className="text-rose-500 shrink-0 mt-0.5" />
+                                <span className="text-xs font-medium text-rose-600 dark:text-rose-400">
+                                    {step.error.error || JSON.stringify(step.error)}
+                                </span>
+                            </div>
                         </div>
-                    </div>
-                )}
-                {step.error && (
-                    <div className="rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 p-3">
-                        <div className="flex items-start gap-2">
-                            <XCircle size={14} className="text-rose-500 shrink-0 mt-0.5" />
-                            <span className="text-xs font-medium text-rose-600 dark:text-rose-400">
-                                {step.error.error || JSON.stringify(step.error)}
-                            </span>
-                        </div>
-                    </div>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 });
@@ -527,89 +605,6 @@ const WorkflowHeader = React.memo(({ events, steps, isRunning }) => {
 });
 
 /* ──────────────────────────────────────────────────────────────────
- * FinalResultCard - Workflow completion summary
- * ────────────────────────────────────────────────────────────────── */
-
-const FinalResultCard = React.memo(({ events, steps, isDark }) => {
-    const completeEvent = events.find(e => e.type === 'complete');
-    const errorEvent = events.find(e => e.type === 'error');
-    if (!completeEvent && !errorEvent) return null;
-
-    const isComplete = !!completeEvent;
-    const data = completeEvent?.data || errorEvent?.data || {};
-    const history = data.history || [];
-    const stepOutputs = data.step_outputs || {};
-    const startTime = events.find(e => e.type === 'start')?.timestamp;
-    const endTime = completeEvent?.timestamp || errorEvent?.timestamp;
-    const duration = formatDuration(startTime, endTime);
-
-    return (
-        <div className={`rounded-xl border overflow-hidden ${
-            isComplete
-                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20'
-                : 'border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/20'
-        }`}>
-            {/* Header */}
-            <div className={`px-4 py-3 border-b ${
-                isComplete 
-                    ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-100/50 dark:bg-emerald-900/30' 
-                    : 'border-rose-200 dark:border-rose-800 bg-rose-100/50 dark:bg-rose-900/30'
-            }`}>
-                <div className="flex items-center gap-2.5">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                        isComplete ? 'bg-emerald-500' : 'bg-rose-500'
-                    }`}>
-                        {isComplete ? <CheckCircle2 size={16} className="text-white" /> : <XCircle size={16} className="text-white" />}
-                    </div>
-                    <div className="flex-1">
-                        <div className="text-sm font-semibold text-zinc-900 dark:text-white">
-                            {isComplete ? '工作流完成' : '工作流失败'}
-                        </div>
-                        {duration && <div className="text-[10px] text-zinc-500 dark:text-zinc-400">总耗时: {duration}</div>}
-                    </div>
-                </div>
-            </div>
-
-            {/* Content */}
-            <div className="p-4 space-y-3">
-                {Object.keys(stepOutputs).length > 0 && (
-                    <div>
-                        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-600 dark:text-zinc-400 uppercase mb-2">
-                            <FileText size={11} />
-                            步骤输出
-                        </div>
-                        <div className="space-y-2">
-                            {Object.entries(stepOutputs).map(([stepName, output], idx) => (
-                                <div key={idx} className="rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-700 p-2.5">
-                                    <div className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">{stepName}</div>
-                                    <div className="max-h-24 overflow-y-auto custom-scrollbar">
-                                        <MarkdownRenderer text={typeof output === 'string' ? output : (output?.output || JSON.stringify(output))} />
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-                {history.length > 0 && (
-                    <details className="rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
-                        <summary className="cursor-pointer px-3 py-2 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">
-                            执行历史 ({history.length} 条)
-                        </summary>
-                        <div className="px-3 pb-2 space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
-                            {history.map((h, idx) => (
-                                <div key={idx} className="text-[10px] text-zinc-500 dark:text-zinc-400 rounded px-2 py-1 bg-white dark:bg-zinc-900/50">
-                                    {typeof h === 'string' ? h : JSON.stringify(h)}
-                                </div>
-                            ))}
-                        </div>
-                    </details>
-                )}
-            </div>
-        </div>
-    );
-});
-
-/* ──────────────────────────────────────────────────────────────────
  * ExecutionTimeline - Main timeline container
  * ────────────────────────────────────────────────────────────────── */
 
@@ -642,7 +637,7 @@ const ExecutionTimeline = React.memo(({ events, isDark, isRunning }) => {
                     <StepPhase key={idx} step={step} isDark={isDark} />
                 ))}
             </div>
-            <FinalResultCard events={events} steps={steps} isDark={isDark} />
+
         </div>
     );
 });

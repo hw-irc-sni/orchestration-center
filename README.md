@@ -351,10 +351,10 @@ The Orchestration Center provides multi-layer access control:
 The internal API (`/rest/v1/orchestrate/*`) is protected by token-based authentication. Two modes are supported depending on `persistence_mode`:
 
 **Database mode (`persistence_mode=postgresql`)**:
-- Users are stored in the PostgreSQL `users` table with SHA-256 + per-user salt hashing.
+- The plaintext password is sent to the backend (over TLS -- see below) and hashed there with SHA-256 + a per-user salt; the server never persists or compares a client-computed hash.
 - A default `admin` user (password: `OpenAN@2026`) is auto-created on first startup.
 - New users can self-register via the registration link on the login page.
-- Passwords must be at least 8 characters with uppercase, lowercase, and a number.
+- Passwords must be at least 8 characters and include at least two of: a digit, an uppercase letter, a lowercase letter, a special character. Enforced server-side (`common/util/password_util.validate_password_complexity`), not just in the UI.
 
 **File mode (`persistence_mode=file`)**:
 - A single password is configured via `access_password` in `server.conf`.
@@ -367,7 +367,9 @@ The internal API (`/rest/v1/orchestrate/*`) is protected by token-based authenti
 | `access_token_ttl` | Session token lifetime in seconds. | `43200` (12h) |
 | `persistence_mode` | `postgresql` enables database-backed user management; `file` uses config-based auth. | `file` |
 
-The frontend hashes the password with SHA-256 (`crypto.subtle`) before sending. Tokens are in-memory with TTL, passed via `Authorization: Bearer` header or `access_token` query parameter (for SSE/EventSource).
+The frontend sends the password as-is; the backend is what hashes it (server-side, salted, for DB-mode accounts; against the configured SHA-256 in file mode). **This relies on `enable_https=true` for confidentiality in transit** -- see the TLS/HTTPS section below; don't run with the shipped `enable_https=false` default outside local development. Tokens are in-memory with TTL, passed via `Authorization: Bearer` header or `access_token` query parameter (for SSE/EventSource).
+
+> **Session storage is single-process only.** Tokens live in an in-memory dict inside the running Python process. Running with multiple `uvicorn` workers, or multiple replicas behind a load balancer, will intermittently reject valid tokens -- a token minted by one worker isn't visible to another. Every process restart also logs out all active sessions (harmless in itself given the token TTL, but worth expecting). Both bundled launch paths (`orchestrate/start.py`) run single-process today, so this doesn't bite out of the box -- but if multi-worker or multi-replica deployment is ever needed, session storage must move to a shared backend (e.g. the same PostgreSQL database, or Redis) first.
 
 Generate the password hash (file mode):
 ```bash
