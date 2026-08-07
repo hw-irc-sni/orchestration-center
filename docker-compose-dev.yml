@@ -11,7 +11,7 @@ services:
       - AGENT_REGISTRY_URL=${AGENT_REGISTRY_URL:-http://openan-registry-center:5000}
 
   # ---- Optional: sample A2A agent fleet (stub demo agents) ----
-  # Same image, different command. These 11 cards give workflow execution
+  # Same image, different command. These cards give workflow execution
   # real endpoints to call; without them, executions have nothing to talk
   # to. Cards under samples/agentcard/*.json hardcode 127.0.0.1, which only
   # resolves correctly when both processes share a host — SAMPLE_AGENTS_HOST
@@ -30,14 +30,14 @@ services:
       - AGENT_REGISTRY_URL=${AGENT_REGISTRY_URL:-http://openan-registry-center:5000}
       - PERSISTENCE_MODE=file
       # Negotiation-capable sample agents need a real chat model to do
-      # anything past startup; common/config/llm_config.json ships with
-      # placeholders. Set these in the host shell or a .env next to this
-      # file to point at any OpenAI-compatible provider.
+      # anything past startup; common/config/llm_config.json ships with a
+      # placeholder API key. Set these in the host shell or a .env next to
+      # this file to point at a real provider.
       - LLM_CHAT_MODEL=${LLM_CHAT_MODEL:-}
       - LLM_CHAT_API_KEY=${LLM_CHAT_API_KEY:-}
       - LLM_CHAT_URL=${LLM_CHAT_URL:-}
     ports:
-      - "8899-8907:8899-8907"
+      - "8899-8904:8899-8904"
       - "26335-26336:26335-26336"
     networks:
       - openan-net

@@ -221,7 +221,7 @@ if you rename or repoint the backend service.
 **Development** — layers `docker-compose-dev.yml` on top, which switches
 `AGENT_REGISTRY_URL` to plain HTTP to match registry-center's dev stack
 (HTTPS disabled there — see that repo's `docker-compose-dev.yml`), and also
-brings up a `sample-agents` service (the 11 stub demo agents from
+brings up a `sample-agents` service (the stub demo agents from
 `samples/agentcard/*.json`) so workflow execution has something to call:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose-dev.yml up -d --build
@@ -240,8 +240,8 @@ containers don't). It's dev-only and intentionally absent from
 > silently breaking calls from the other.
 
 Negotiation-capable sample agents need real chat-model credentials to do
-anything past startup — `common/config/llm_config.json` ships with
-placeholders. Pass `LLM_CHAT_MODEL`/`LLM_CHAT_API_KEY`/`LLM_CHAT_URL`
+anything past startup — `common/config/llm_config.json` ships with a
+placeholder API key. Pass `LLM_CHAT_MODEL`/`LLM_CHAT_API_KEY`/`LLM_CHAT_URL`
 (host shell or a `.env` next to the compose file) to `sample-agents` for
 negotiation to actually work, not just for the container to start green.
 

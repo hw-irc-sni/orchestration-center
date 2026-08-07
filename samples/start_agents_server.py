@@ -251,7 +251,28 @@ async def start_server(agent_card: AgentCard, port: int, host: str = "127.0.0.1"
         pass
 
 
+def _warn_if_chat_llm_unconfigured() -> None:
+    """Negotiation-capable sample agents need a real chat model. Agents still
+    start without one (see common/llm/config/llm_config.py's degrade-not-crash
+    guard) but every negotiation call will fail, so make that loud at startup
+    instead of leaving it to surface as a per-call error later."""
+    try:
+        from common.llm.config.llm_config import get_model_config, missing_required_fields, describe_missing_fields
+
+        config = get_model_config("chat")
+        missing = missing_required_fields(config) if config else ["url", "model", "api_key"]
+        if missing:
+            logger.warning(
+                f"Sample agents starting without a configured chat LLM: "
+                f"{describe_missing_fields('chat', missing)}"
+            )
+    except Exception as e:
+        logger.warning(f"Could not verify chat LLM configuration at startup: {e}")
+
+
 async def main() -> None:
+    _warn_if_chat_llm_unconfigured()
+
     try:
         pre_insert_psop()
     except Exception as e:
