@@ -196,6 +196,7 @@ def main():
     Main entry point for starting the PSOP server.
     """
     server_config = get_conf()
+
     is_https = server_config.get("enable_https", True)
     is_enable_https = str(is_https).lower() == 'true'
     validate_storage_mode()
@@ -239,6 +240,7 @@ if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info("  [Internal API - /rest/v1/orchestrate]")
     logger.info("  POST /parse-pdf              - Upload SolutionPackage PDF")
+    logger.info("  POST /parse-bpmn             - Upload BPMN flows")
     logger.info("  POST /generate-from-preflow  - SOP text -> PSOP")
     logger.info("  POST /generate-from-intent   - Intent -> PSOP")
     logger.info("  POST /retrieve-by-intent     - Semantic PSOP search")

@@ -30,6 +30,7 @@ import {
   getTemplates,
   importTemplate,
   parsePdf,
+  parseBpmn,
   handlePlan,
   generateWorkflowFromIntent,
   getStartProcessStreamUrl,
@@ -175,6 +176,23 @@ describe('api service', () => {
         expect(getBaseUrl()).toBe(defaultGateway);
       });
     });
+
+    describe('with no saved config, on a standard port', () => {
+      const originalLocation = window.location;
+
+      afterEach(() => {
+        Object.defineProperty(window, 'location', { value: originalLocation, configurable: true });
+      });
+
+      it('uses the nginx gateway for a non-localhost hostname served on port 443, regardless of host', () => {
+        Object.defineProperty(window, 'location', {
+          value: { ...originalLocation, hostname: 'orchestration.example.com', port: '443', protocol: 'https:' },
+          configurable: true,
+        });
+        expect(shouldDefaultToGateway()).toBe(true);
+        expect(getBaseUrl()).toBe(defaultGateway);
+      });
+    });
   });
 
   describe('API requests using the api instance', () => {
@@ -250,6 +268,40 @@ describe('api service', () => {
       mockApi.post.mockResolvedValue({ status: 'error', message: 'Parse failed' });
 
       await expect(parsePdf(mockFile)).rejects.toThrow('Parse failed');
+    });
+
+    it('parseBpmn should handle successful response', async () => {
+      const mockApi = axios.create();
+      const mockFile = new File([''], 'test.bpmn', { type: 'application/xml' });
+      const mockContent = { key: 'value' };
+      mockApi.post.mockResolvedValue({ status: 'success', data: mockContent });
+
+      const result = await parseBpmn(mockFile);
+      expect(result).toEqual({ key: 'value' });
+      expect(mockApi.post).toHaveBeenCalledWith(
+        expect.stringContaining('/rest/v1/orchestrate/parse-bpmn'),
+        expect.any(FormData)
+      );
+    });
+
+    it('parseBpmn should append process_id as a query param when provided', async () => {
+      const mockApi = axios.create();
+      const mockFile = new File([''], 'test.bpmn', { type: 'application/xml' });
+      mockApi.post.mockResolvedValue({ status: 'success', data: {} });
+
+      await parseBpmn(mockFile, 'process-1');
+      expect(mockApi.post).toHaveBeenCalledWith(
+        expect.stringContaining('/rest/v1/orchestrate/parse-bpmn?process_id=process-1'),
+        expect.any(FormData)
+      );
+    });
+
+    it('parseBpmn should throw error when status is not success', async () => {
+      const mockApi = axios.create();
+      const mockFile = new File([''], 'test.bpmn', { type: 'application/xml' });
+      mockApi.post.mockResolvedValue({ status: 'error', message: 'Parse failed' });
+
+      await expect(parseBpmn(mockFile)).rejects.toThrow('Parse failed');
     });
 
     it('handlePlan should handle successful response', async () => {

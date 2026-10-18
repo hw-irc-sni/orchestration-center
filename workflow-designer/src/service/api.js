@@ -183,7 +183,17 @@ export async function deleteSolutionPackage(pdfFilename) {
     return unwrapEnvelope(await api.delete(`${ORCHESTRATE_BASE()}/solution-packages/${encodeURIComponent(pdfFilename)}`));
 }
 
-// 鈹€鈹€鈹€鈹€ Workflow Generation 鈹€鈹€鈹€鈹€
+// ──── BPMN Parsing ────
+
+export async function parseBpmn(file, processId) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const query = processId ? `?process_id=${encodeURIComponent(processId)}` : '';
+    const body = await api.post(`${ORCHESTRATE_BASE()}/parse-bpmn${query}`, formData);
+    return unwrapEnvelope(body);
+}
+
+// ──── Workflow Generation ────
 
 export async function handlePlan(preflow, agentCards) {
     const body = await api.post(`${ORCHESTRATE_BASE()}/generate-from-preflow`, {

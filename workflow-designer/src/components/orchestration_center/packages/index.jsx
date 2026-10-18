@@ -20,7 +20,10 @@ import { listSolutionPackages, deleteSolutionPackage } from '../../../service/ap
 
 const stem = (filename) => filename.replace(/\.pdf$/i, '');
 
-const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadingStatus, progress, t }) => {
+// PDF (chapter-based) and BPMN/XML (process diagram) both resolve to a PreFlow.
+const isSupportedFile = (file) => !!file && /\.(pdf|bpmn|xml)$/i.test(file.name || '');
+
+const SolutionPackages = ({ onBack, onImportFile, onViewWorkflow, loading, loadingStatus, progress, t }) => {
     const fileInput = useRef(null);
     const [dragOver, setDragOver] = useState(false);
     const [packages, setPackages] = useState([]);
@@ -54,15 +57,15 @@ const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadin
         e.preventDefault();
         setDragOver(false);
         const file = e.dataTransfer.files[0];
-        if (file && file.type === 'application/pdf') {
-            onImportPdf(file);
+        if (isSupportedFile(file)) {
+            onImportFile(file);
         }
     };
 
     const handleFileSelect = (e) => {
         const file = e.target.files[0];
-        if (file && file.type === 'application/pdf') {
-            onImportPdf(file);
+        if (isSupportedFile(file)) {
+            onImportFile(file);
         }
         e.target.value = '';
     };
@@ -104,7 +107,7 @@ const SolutionPackages = ({ onBack, onImportPdf, onViewWorkflow, loading, loadin
                         type="file"
                         ref={fileInput}
                         className="hidden"
-                        accept=".pdf"
+                        accept=".pdf,.bpmn,.xml"
                         onChange={handleFileSelect}
                     />
                     {loading ? (
